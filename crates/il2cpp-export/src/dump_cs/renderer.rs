@@ -33,6 +33,24 @@ impl DumpCsExporter {
     }
 }
 
+/// Renders one type with the same formatter used by `dump.cs`.
+pub fn render_type<W: Write>(
+    context: &ExportContext<'_>,
+    type_id: TypeId,
+    writer: &mut W,
+) -> Result<()> {
+    Renderer::new(context, writer, DumpCsOptions::default()).render_type(type_id, 0)
+}
+
+/// Renders one method declaration with the same formatter used by `dump.cs`.
+pub fn render_method<W: Write>(
+    context: &ExportContext<'_>,
+    method_id: il2cpp_core::model::MethodId,
+    writer: &mut W,
+) -> Result<()> {
+    Renderer::new(context, writer, DumpCsOptions::default()).render_method(method_id, 0)
+}
+
 impl Exporter for DumpCsExporter {
     type Summary = DumpCsSummary;
 

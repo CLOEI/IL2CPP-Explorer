@@ -122,7 +122,7 @@ impl fmt::Display for BinaryFormat {
 }
 
 /// Common access interface for executable images.
-pub trait BinaryImage {
+pub trait BinaryImage: Send + Sync {
     fn format(&self) -> BinaryFormat;
 
     fn architecture(&self) -> Architecture;

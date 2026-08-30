@@ -9,7 +9,9 @@ use il2cpp_core::metadata::Metadata;
 use il2cpp_core::registration::NativeMethodIndex;
 use serde_json::json;
 
-pub use dump_cs::{DumpCsExporter, DumpCsOptions, DumpCsSummary};
+pub use dump_cs::{
+    CSharpTypeRenderer, DumpCsExporter, DumpCsOptions, DumpCsSummary, render_method, render_type,
+};
 
 /// Shared normalized source consumed by all exporters.
 pub struct ExportContext<'a> {

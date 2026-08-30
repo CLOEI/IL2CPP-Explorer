@@ -1,0 +1,16 @@
+[package]
+name = "il2cpp-desktop"
+description = "Native egui desktop frontend for IL2CPP Explorer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+rfd.workspace = true
+il2cpp-core = { path = "../../crates/il2cpp-core" }
+il2cpp-disasm = { path = "../../crates/il2cpp-disasm" }
+il2cpp-export = { path = "../../crates/il2cpp-export" }
