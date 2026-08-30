@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +43,88 @@ pub struct MethodAddress {
     pub virtual_address: u64,
     pub relative_address: u64,
     pub file_offset: u64,
+}
+
+/// Address-keyed native method mappings built once for fast call resolution.
+#[derive(Debug, Clone, Default)]
+pub struct NativeMethodIndex {
+    by_address: BTreeMap<u64, Vec<MethodId>>,
+    by_method: Vec<Option<MethodAddress>>,
+}
+
+impl NativeMethodIndex {
+    /// Resolves every metadata method and indexes all generated native addresses.
+    pub fn build(
+        binary: &dyn BinaryImage,
+        metadata: &Metadata,
+        registration: &RegistrationInfo,
+    ) -> Result<Self> {
+        let mut addresses = Vec::new();
+        for method in &metadata.methods {
+            if let Some(address) = registration.resolve_method(binary, metadata, method.id)? {
+                addresses.push(address);
+            }
+        }
+        Ok(Self::from_addresses(metadata.methods.len(), addresses))
+    }
+
+    /// Builds an index from already-resolved addresses.
+    pub fn from_addresses(
+        method_count: usize,
+        addresses: impl IntoIterator<Item = MethodAddress>,
+    ) -> Self {
+        let mut index = Self {
+            by_address: BTreeMap::new(),
+            by_method: vec![None; method_count],
+        };
+        for address in addresses {
+            let method = address.method;
+            if method.0 >= index.by_method.len() {
+                index.by_method.resize(method.0 + 1, None);
+            }
+            index
+                .by_address
+                .entry(address.virtual_address)
+                .or_default()
+                .push(method);
+            index.by_method[method.0] = Some(address);
+        }
+        index
+    }
+
+    /// Returns one method starting exactly at an address.
+    pub fn method_at_address(&self, address: u64) -> Option<MethodId> {
+        self.methods_at_address(address).first().copied()
+    }
+
+    /// Returns every method sharing an exact native start address.
+    pub fn methods_at_address(&self, address: u64) -> &[MethodId] {
+        self.by_address
+            .get(&address)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    /// Returns one method's resolved address.
+    pub fn address_of(&self, method: MethodId) -> Option<&MethodAddress> {
+        self.by_method.get(method.0)?.as_ref()
+    }
+
+    /// Returns the next distinct known native method start.
+    pub fn next_address_after(&self, address: u64) -> Option<u64> {
+        self.by_address
+            .range((
+                std::ops::Bound::Excluded(address),
+                std::ops::Bound::Unbounded,
+            ))
+            .next()
+            .map(|(address, _)| *address)
+    }
+
+    /// Returns the number of metadata methods with native mappings.
+    pub fn mapped_method_count(&self) -> usize {
+        self.by_method.iter().flatten().count()
+    }
 }
 
 impl RegistrationInfo {
@@ -409,7 +491,8 @@ fn is_executable(binary: &dyn BinaryImage, address: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::method_pointer_index;
+    use super::{MethodAddress, NativeMethodIndex, method_pointer_index};
+    use crate::model::MethodId;
 
     #[test]
     fn method_tokens_map_to_zero_based_module_slots() {
@@ -417,5 +500,35 @@ mod tests {
         assert_eq!(method_pointer_index(0x0600_0042), Some(0x41));
         assert_eq!(method_pointer_index(0x0200_0001), None);
         assert_eq!(method_pointer_index(0x0600_0000), None);
+    }
+
+    #[test]
+    fn native_method_index_supports_exact_and_next_lookups() {
+        let address = |method, virtual_address| MethodAddress {
+            method: MethodId(method),
+            module: "Test.dll".to_owned(),
+            pointer_index: method as u32,
+            virtual_address,
+            relative_address: virtual_address - 0x1000,
+            file_offset: virtual_address - 0x1000,
+        };
+        let index = NativeMethodIndex::from_addresses(
+            4,
+            [address(0, 0x1100), address(1, 0x1180), address(2, 0x1180)],
+        );
+
+        assert_eq!(index.method_at_address(0x1100), Some(MethodId(0)));
+        assert_eq!(
+            index.methods_at_address(0x1180),
+            &[MethodId(1), MethodId(2)]
+        );
+        assert_eq!(
+            index.address_of(MethodId(2)).unwrap().virtual_address,
+            0x1180
+        );
+        assert_eq!(index.address_of(MethodId(3)), None);
+        assert_eq!(index.next_address_after(0x1100), Some(0x1180));
+        assert_eq!(index.next_address_after(0x1180), None);
+        assert_eq!(index.mapped_method_count(), 3);
     }
 }

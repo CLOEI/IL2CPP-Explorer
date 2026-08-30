@@ -9,3 +9,6 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+capstone.workspace = true
+il2cpp-core = { path = "../il2cpp-core" }
+serde.workspace = true

@@ -78,6 +78,62 @@ enum Command {
         /// Virtual address in decimal or 0x-prefixed hexadecimal.
         address: String,
     },
+    /// Disassemble one resolved IL2CPP method as AArch64.
+    Disasm {
+        binary: PathBuf,
+        metadata: PathBuf,
+        /// Fully qualified or unique Type::Method query.
+        query: Option<String>,
+        /// Select one exact metadata method index.
+        #[arg(long, conflicts_with = "query")]
+        method_id: Option<usize>,
+        /// Maximum disassembly window in bytes.
+        #[arg(long, default_value_t = 256)]
+        bytes: usize,
+        /// Omit instruction bytes from text output.
+        #[arg(long)]
+        no_bytes: bool,
+        /// Print basic instruction counts.
+        #[arg(long, conflicts_with = "json")]
+        stats: bool,
+        /// Emit backend-independent JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Disassemble a raw AArch64 executable address.
+    DisasmAddress {
+        binary: PathBuf,
+        /// RVA in decimal or 0x-prefixed hexadecimal.
+        address: Option<String>,
+        /// Explicit RVA in decimal or 0x-prefixed hexadecimal.
+        #[arg(long, conflicts_with_all = ["address", "va"])]
+        rva: Option<String>,
+        /// Explicit VA in decimal or 0x-prefixed hexadecimal.
+        #[arg(long, conflicts_with_all = ["address", "rva"])]
+        va: Option<String>,
+        /// Maximum disassembly window in bytes.
+        #[arg(long, default_value_t = 256)]
+        bytes: usize,
+        /// Omit instruction bytes from text output.
+        #[arg(long)]
+        no_bytes: bool,
+        /// Print basic instruction counts.
+        #[arg(long)]
+        stats: bool,
+    },
+    /// List direct AArch64 BL calls from one resolved IL2CPP method.
+    Calls {
+        binary: PathBuf,
+        metadata: PathBuf,
+        /// Fully qualified or unique Type::Method query.
+        query: Option<String>,
+        /// Select one exact metadata method index.
+        #[arg(long, conflicts_with = "query")]
+        method_id: Option<usize>,
+        /// Maximum disassembly window in bytes.
+        #[arg(long, default_value_t = 256)]
+        bytes: usize,
+    },
 }
 
 fn main() -> Result<()> {
@@ -117,5 +173,48 @@ fn main() -> Result<()> {
             metadata,
             address,
         } => commands::address(&binary, &metadata, &address),
+        Command::Disasm {
+            binary,
+            metadata,
+            query,
+            method_id,
+            bytes,
+            no_bytes,
+            stats,
+            json,
+        } => commands::disasm(
+            &binary,
+            &metadata,
+            query.as_deref(),
+            method_id,
+            bytes,
+            no_bytes,
+            stats,
+            json,
+        ),
+        Command::DisasmAddress {
+            binary,
+            address,
+            rva,
+            va,
+            bytes,
+            no_bytes,
+            stats,
+        } => commands::disasm_address(
+            &binary,
+            address.as_deref(),
+            rva.as_deref(),
+            va.as_deref(),
+            bytes,
+            no_bytes,
+            stats,
+        ),
+        Command::Calls {
+            binary,
+            metadata,
+            query,
+            method_id,
+            bytes,
+        } => commands::calls(&binary, &metadata, query.as_deref(), method_id, bytes),
     }
 }
