@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::binary::{Architecture, BinaryImage, Endianness};
 use crate::metadata::Metadata;
-use crate::model::MethodId;
+use crate::model::{FieldId, MethodId};
 use crate::{Error, Result};
 
 use super::Registration;
@@ -43,6 +43,41 @@ pub struct MethodAddress {
     pub virtual_address: u64,
     pub relative_address: u64,
     pub file_offset: u64,
+}
+
+/// Validated runtime metadata tables needed for type and field reconstruction.
+#[derive(Debug, Clone)]
+pub struct RuntimeMetadata {
+    metadata_registration: u64,
+    type_addresses: Vec<u64>,
+    field_offsets: Vec<Option<i32>>,
+}
+
+impl RuntimeMetadata {
+    pub fn metadata_registration(&self) -> u64 {
+        self.metadata_registration
+    }
+
+    pub fn type_count(&self) -> usize {
+        self.type_addresses.len()
+    }
+
+    pub fn type_address(&self, index: usize) -> Option<u64> {
+        self.type_addresses.get(index).copied()
+    }
+
+    pub fn field_offset(&self, field: FieldId) -> Option<i32> {
+        self.field_offsets.get(field.0).copied().flatten()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests(type_addresses: Vec<u64>, field_count: usize) -> Self {
+        Self {
+            metadata_registration: 0,
+            type_addresses,
+            field_offsets: vec![None; field_count],
+        }
+    }
 }
 
 /// Address-keyed native method mappings built once for fast call resolution.
@@ -211,6 +246,76 @@ impl RegistrationInfo {
             relative_address,
             file_offset,
         }))
+    }
+
+    /// Reads runtime type pointers and field offsets from metadata registration.
+    pub fn runtime_metadata(
+        &self,
+        binary: &dyn BinaryImage,
+        metadata: &Metadata,
+    ) -> Result<RuntimeMetadata> {
+        let base = self
+            .registration
+            .metadata_registration
+            .ok_or(Error::RegistrationNotFound)?;
+        let type_count =
+            usize::try_from(read_u32(binary, base + 0x30)?).map_err(|_| Error::InvalidBinary)?;
+        let type_table = relocated_pointer(binary, base + 0x38)?;
+        let type_table_size = type_count.checked_mul(8).ok_or(Error::InvalidBinary)?;
+        binary.read_virtual(type_table, type_table_size)?;
+        let mut type_addresses = Vec::with_capacity(type_count);
+        for index in 0..type_count {
+            let slot = type_table
+                .checked_add(index as u64 * 8)
+                .ok_or(Error::InvalidBinary)?;
+            let address = relocated_pointer(binary, slot)?;
+            if address == 0 || binary.read_virtual(address, 12).is_err() {
+                return Err(Error::InvalidBinary);
+            }
+            type_addresses.push(address);
+        }
+
+        let field_offset_count =
+            usize::try_from(read_u32(binary, base + 0x50)?).map_err(|_| Error::InvalidBinary)?;
+        if field_offset_count != metadata.types.len() {
+            return Err(Error::InvalidBinary);
+        }
+        let field_offset_table = relocated_pointer(binary, base + 0x58)?;
+        binary.read_virtual(
+            field_offset_table,
+            field_offset_count
+                .checked_mul(8)
+                .ok_or(Error::InvalidBinary)?,
+        )?;
+        let mut field_offsets = vec![None; metadata.fields.len()];
+        for ty in &metadata.types {
+            if ty.fields.is_empty() {
+                continue;
+            }
+            let slot = field_offset_table
+                .checked_add(ty.id.0 as u64 * 8)
+                .ok_or(Error::InvalidBinary)?;
+            let offsets = relocated_pointer(binary, slot)?;
+            if offsets == 0 {
+                continue;
+            }
+            binary.read_virtual(
+                offsets,
+                ty.fields.len().checked_mul(4).ok_or(Error::InvalidBinary)?,
+            )?;
+            for (local_index, field) in ty.fields.iter().enumerate() {
+                let address = offsets
+                    .checked_add(local_index as u64 * 4)
+                    .ok_or(Error::InvalidBinary)?;
+                field_offsets[field.0] = Some(read_i32(binary, address)?);
+            }
+        }
+
+        Ok(RuntimeMetadata {
+            metadata_registration: base,
+            type_addresses,
+            field_offsets,
+        })
     }
 }
 
@@ -452,6 +557,14 @@ fn read_u32(binary: &dyn BinaryImage, address: u64) -> Result<u32> {
         .try_into()
         .map_err(|_| Error::InvalidBinary)?;
     Ok(u32::from_le_bytes(bytes))
+}
+
+fn read_i32(binary: &dyn BinaryImage, address: u64) -> Result<i32> {
+    let bytes: [u8; 4] = binary
+        .read_virtual(address, 4)?
+        .try_into()
+        .map_err(|_| Error::InvalidBinary)?;
+    Ok(i32::from_le_bytes(bytes))
 }
 
 fn read_u64(binary: &dyn BinaryImage, address: u64) -> Result<u64> {

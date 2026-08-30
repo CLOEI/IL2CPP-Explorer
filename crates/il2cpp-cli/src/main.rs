@@ -134,6 +134,34 @@ enum Command {
         #[arg(long, default_value_t = 256)]
         bytes: usize,
     },
+    /// Generate a C#-style metadata dump.
+    Dump {
+        /// Binary path, or metadata path in metadata-only mode.
+        input: PathBuf,
+        /// Metadata path when a binary path is supplied first.
+        metadata: Option<PathBuf>,
+        /// Output file. Writes dump.cs to stdout when omitted.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Omit native RVA comments.
+        #[arg(long)]
+        no_addresses: bool,
+        #[arg(long)]
+        file_offsets: bool,
+        /// Omit metadata token comments.
+        #[arg(long)]
+        no_tokens: bool,
+        #[arg(long)]
+        indices: bool,
+        /// Omit resolved field offsets.
+        #[arg(long)]
+        no_field_offsets: bool,
+        #[arg(long)]
+        fully_qualified_types: bool,
+        /// Print phase-level progress.
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -216,5 +244,30 @@ fn main() -> Result<()> {
             method_id,
             bytes,
         } => commands::calls(&binary, &metadata, query.as_deref(), method_id, bytes),
+        Command::Dump {
+            input,
+            metadata,
+            output,
+            no_addresses,
+            file_offsets,
+            no_tokens,
+            indices,
+            no_field_offsets,
+            fully_qualified_types,
+            verbose,
+        } => commands::dump(
+            &input,
+            metadata.as_deref(),
+            output.as_deref(),
+            commands::DumpFlags {
+                no_addresses,
+                file_offsets,
+                no_tokens,
+                indices,
+                no_field_offsets,
+                fully_qualified_types,
+                verbose,
+            },
+        ),
     }
 }

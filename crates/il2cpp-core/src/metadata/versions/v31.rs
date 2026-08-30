@@ -9,6 +9,9 @@ pub(crate) const TYPE_DEFINITION_SIZE: usize = 88;
 pub(crate) const FIELD_SIZE: usize = 12;
 pub(crate) const METHOD_SIZE: usize = 36;
 pub(crate) const PARAMETER_SIZE: usize = 12;
+pub(crate) const PROPERTY_SIZE: usize = 20;
+pub(crate) const GENERIC_PARAMETER_SIZE: usize = 16;
+pub(crate) const GENERIC_CONTAINER_SIZE: usize = 16;
 
 #[derive(Debug)]
 pub(crate) struct RawImage {
@@ -28,13 +31,24 @@ pub(crate) struct RawAssembly {
 pub(crate) struct RawTypeDefinition {
     pub name_index: u32,
     pub namespace_index: u32,
+    pub byval_type_index: i32,
     pub declaring_type_index: i32,
     pub parent_index: i32,
+    pub element_type_index: i32,
     pub generic_container_index: i32,
+    pub flags: u32,
     pub field_start: i32,
     pub method_start: i32,
+    pub property_start: i32,
+    pub nested_types_start: i32,
+    pub interfaces_start: i32,
     pub field_count: u16,
     pub method_count: u16,
+    pub property_count: u16,
+    pub nested_type_count: u16,
+    pub interfaces_count: u16,
+    pub bitfield: u32,
+    pub token: u32,
 }
 
 #[derive(Debug)]
@@ -67,6 +81,33 @@ pub(crate) struct RawParameter {
 }
 
 #[derive(Debug)]
+pub(crate) struct RawProperty {
+    pub name_index: u32,
+    pub getter: i32,
+    pub setter: i32,
+    pub attributes: u32,
+    pub token: u32,
+}
+
+#[derive(Debug)]
+pub(crate) struct RawGenericContainer {
+    pub owner_index: i32,
+    pub type_argument_count: i32,
+    pub is_method: i32,
+    pub generic_parameter_start: i32,
+}
+
+#[derive(Debug)]
+pub(crate) struct RawGenericParameter {
+    pub owner_index: i32,
+    pub name_index: u32,
+    pub constraints_start: i16,
+    pub constraints_count: i16,
+    pub position: u16,
+    pub flags: u16,
+}
+
+#[derive(Debug)]
 pub(crate) struct RawRecords {
     pub images: Vec<RawImage>,
     pub assemblies: Vec<RawAssembly>,
@@ -74,7 +115,12 @@ pub(crate) struct RawRecords {
     pub fields: Vec<RawField>,
     pub methods: Vec<RawMethod>,
     pub parameters: Vec<RawParameter>,
-    pub generic_container_count: usize,
+    pub properties: Vec<RawProperty>,
+    pub generic_containers: Vec<RawGenericContainer>,
+    pub generic_parameters: Vec<RawGenericParameter>,
+    pub generic_parameter_constraints: Vec<i32>,
+    pub nested_types: Vec<i32>,
+    pub interfaces: Vec<i32>,
 }
 
 pub(crate) fn parse_header(
@@ -154,7 +200,15 @@ pub(crate) fn parse_records(
         fields: parse_fields(reader, header)?,
         methods: parse_methods(reader, header)?,
         parameters: parse_parameters(reader, header)?,
-        generic_container_count: header.generic_containers.entry_count(16, reader.len())?,
+        properties: parse_properties(reader, header)?,
+        generic_containers: parse_generic_containers(reader, header)?,
+        generic_parameters: parse_generic_parameters(reader, header)?,
+        generic_parameter_constraints: parse_i32_table(
+            reader,
+            header.generic_parameter_constraints,
+        )?,
+        nested_types: parse_i32_table(reader, header.nested_types)?,
+        interfaces: parse_i32_table(reader, header.interfaces)?,
     })
 }
 
@@ -209,13 +263,24 @@ fn parse_types(
             Ok(RawTypeDefinition {
                 name_index: reader.read_u32(offset)?,
                 namespace_index: reader.read_u32(offset + 4)?,
+                byval_type_index: reader.read_i32(offset + 8)?,
                 declaring_type_index: reader.read_i32(offset + 12)?,
                 parent_index: reader.read_i32(offset + 16)?,
+                element_type_index: reader.read_i32(offset + 20)?,
                 generic_container_index: reader.read_i32(offset + 24)?,
+                flags: reader.read_u32(offset + 28)?,
                 field_start: reader.read_i32(offset + 32)?,
                 method_start: reader.read_i32(offset + 36)?,
+                property_start: reader.read_i32(offset + 44)?,
+                nested_types_start: reader.read_i32(offset + 48)?,
+                interfaces_start: reader.read_i32(offset + 52)?,
                 method_count: reader.read_u16(offset + 64)?,
+                property_count: reader.read_u16(offset + 66)?,
                 field_count: reader.read_u16(offset + 68)?,
+                nested_type_count: reader.read_u16(offset + 72)?,
+                interfaces_count: reader.read_u16(offset + 76)?,
+                bitfield: reader.read_u32(offset + 80)?,
+                token: reader.read_u32(offset + 84)?,
             })
         })
         .collect()
@@ -268,5 +333,74 @@ fn parse_parameters(
                 type_index: reader.read_i32(offset + 8)?,
             })
         })
+        .collect()
+}
+
+fn parse_properties(
+    reader: &MetadataReader<'_>,
+    header: &MetadataHeader,
+) -> Result<Vec<RawProperty>> {
+    offsets(header.properties, PROPERTY_SIZE, reader.len())?
+        .into_iter()
+        .map(|offset| {
+            Ok(RawProperty {
+                name_index: reader.read_u32(offset)?,
+                getter: reader.read_i32(offset + 4)?,
+                setter: reader.read_i32(offset + 8)?,
+                attributes: reader.read_u32(offset + 12)?,
+                token: reader.read_u32(offset + 16)?,
+            })
+        })
+        .collect()
+}
+
+fn parse_generic_containers(
+    reader: &MetadataReader<'_>,
+    header: &MetadataHeader,
+) -> Result<Vec<RawGenericContainer>> {
+    offsets(
+        header.generic_containers,
+        GENERIC_CONTAINER_SIZE,
+        reader.len(),
+    )?
+    .into_iter()
+    .map(|offset| {
+        Ok(RawGenericContainer {
+            owner_index: reader.read_i32(offset)?,
+            type_argument_count: reader.read_i32(offset + 4)?,
+            is_method: reader.read_i32(offset + 8)?,
+            generic_parameter_start: reader.read_i32(offset + 12)?,
+        })
+    })
+    .collect()
+}
+
+fn parse_generic_parameters(
+    reader: &MetadataReader<'_>,
+    header: &MetadataHeader,
+) -> Result<Vec<RawGenericParameter>> {
+    offsets(
+        header.generic_parameters,
+        GENERIC_PARAMETER_SIZE,
+        reader.len(),
+    )?
+    .into_iter()
+    .map(|offset| {
+        Ok(RawGenericParameter {
+            owner_index: reader.read_i32(offset)?,
+            name_index: reader.read_u32(offset + 4)?,
+            constraints_start: reader.read_i16(offset + 8)?,
+            constraints_count: reader.read_i16(offset + 10)?,
+            position: reader.read_u16(offset + 12)?,
+            flags: reader.read_u16(offset + 14)?,
+        })
+    })
+    .collect()
+}
+
+fn parse_i32_table(reader: &MetadataReader<'_>, table: MetadataTable) -> Result<Vec<i32>> {
+    offsets(table, 4, reader.len())?
+        .into_iter()
+        .map(|offset| reader.read_i32(offset))
         .collect()
 }

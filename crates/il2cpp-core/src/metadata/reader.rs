@@ -41,6 +41,14 @@ impl<'data> MetadataReader<'data> {
         ))
     }
 
+    /// Reads a little-endian signed 16-bit value.
+    pub fn read_i16(&self, offset: usize) -> Result<i16> {
+        let bytes = self.read_bytes(offset, 2)?;
+        Ok(i16::from_le_bytes(
+            bytes.try_into().map_err(|_| Error::InvalidMetadata)?,
+        ))
+    }
+
     /// Reads a little-endian unsigned 32-bit value.
     pub fn read_u32(&self, offset: usize) -> Result<u32> {
         let bytes = self.read_bytes(offset, 4)?;

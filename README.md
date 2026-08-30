@@ -10,10 +10,10 @@ access, analysis, disassembly, build comparison, export, and application concern
 
 ## Status
 
-**Early stage.** The repository currently parses version 31 metadata headers, strings, images,
-assemblies, types, fields, methods, and parameters. ELF64 inspection is available for the current
-Android/AArch64 development target, including relocation-based registration discovery and native
-method-address mapping.
+**Early stage.** The repository parses version 31 metadata, resolves runtime `Il2CppType` graphs,
+reconstructs fields, properties, methods, generics, inheritance, and interfaces, and generates a
+streaming `dump.cs`. ELF64 inspection is available for the current Android/AArch64 target,
+including registration discovery, native method mapping, and AArch64 disassembly.
 
 ## Goals
 
@@ -72,7 +72,21 @@ cargo run -p il2cpp-cli -- type ./global-metadata.dat MainPlayer
 cargo run -p il2cpp-cli -- registrations ./libil2cpp.so ./global-metadata.dat --verbose
 cargo run -p il2cpp-cli -- method ./libil2cpp.so ./global-metadata.dat System.String::Equals
 cargo run -p il2cpp-cli -- address ./libil2cpp.so ./global-metadata.dat 0x2ce8760
+cargo run -p il2cpp-cli -- dump ./libil2cpp.so ./global-metadata.dat -o dump.cs
 ```
+
+Addresses, metadata tokens, and resolved field offsets are included by default. Use
+`--no-addresses`, `--no-tokens`, or `--no-field-offsets` to omit them; `--file-offsets`,
+`--indices`, and `--fully-qualified-types` enable additional detail.
+
+Generate a metadata-only dump when `libil2cpp.so` is unavailable. Type indexes are retained as
+explicit unresolved references rather than guessed:
+
+```bash
+cargo run -p il2cpp-cli -- dump ./global-metadata.dat -o dump.cs
+```
+
+See [docs/type-system.md](docs/type-system.md) for the normalized runtime type model.
 
 Root `libil2cpp.so` and `global-metadata.dat` files are local-only development fixtures and are
 ignored by Git.
@@ -104,11 +118,13 @@ cargo build --workspace
 - [x] Methods
 - [x] Code registration discovery
 - [x] Native method address mapping
+- [x] AArch64 disassembly
+- [x] Runtime type/signature resolution
+- [x] `dump.cs` export
 - [ ] Search
 - [ ] JSON export
 - [ ] Desktop UI
 - [ ] Build diffing
-- [ ] Disassembly
 - [ ] PE support
 - [ ] Mach-O support
 

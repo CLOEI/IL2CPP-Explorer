@@ -1,9 +1,14 @@
 use il2cpp_core::metadata::{METADATA_SANITY, Metadata, MetadataVersion};
 
 const STRINGS_PAIR: usize = 2;
+const PROPERTIES_PAIR: usize = 4;
 const METHODS_PAIR: usize = 5;
 const PARAMETERS_PAIR: usize = 10;
 const FIELDS_PAIR: usize = 11;
+const GENERIC_PARAMETERS_PAIR: usize = 12;
+const GENERIC_CONSTRAINTS_PAIR: usize = 13;
+const GENERIC_CONTAINERS_PAIR: usize = 14;
+const INTERFACES_PAIR: usize = 16;
 const TYPES_PAIR: usize = 19;
 const IMAGES_PAIR: usize = 20;
 const ASSEMBLIES_PAIR: usize = 21;
@@ -22,6 +27,10 @@ fn parses_minimal_v31_model() {
     assert_eq!(metadata.fields[0].name, "field");
     assert_eq!(metadata.methods[0].name, "Method");
     assert_eq!(metadata.parameters[0].name, "param");
+    assert_eq!(metadata.properties[0].name, "Property");
+    assert_eq!(metadata.properties[0].getter.unwrap().0, 0);
+    assert_eq!(metadata.generic_parameters[0].name, "T");
+    assert_eq!(metadata.types[0].interfaces[0].0, 0);
 }
 
 #[test]
@@ -41,8 +50,15 @@ fn minimal_metadata() -> Vec<u8> {
     add_table(
         &mut data,
         STRINGS_PAIR,
-        b"\0Test.dll\0Test\0Ns\0Type\0field\0Method\0param\0",
+        b"\0Test.dll\0Test\0Ns\0Type\0field\0Method\0param\0Property\0T\0",
     );
+
+    let mut property = vec![0_u8; 20];
+    write_u32(&mut property, 0, 42);
+    write_i32(&mut property, 4, 0);
+    write_i32(&mut property, 8, -1);
+    write_u32(&mut property, 16, 0x1700_0001);
+    add_table(&mut data, PROPERTIES_PAIR, &property);
 
     let mut method = vec![0_u8; 36];
     write_u32(&mut method, 0, 29);
@@ -67,16 +83,39 @@ fn minimal_metadata() -> Vec<u8> {
     write_u32(&mut field, 8, 0x0400_0001);
     add_table(&mut data, FIELDS_PAIR, &field);
 
+    let mut generic_parameter = vec![0_u8; 16];
+    write_i32(&mut generic_parameter, 0, 0);
+    write_u32(&mut generic_parameter, 4, 51);
+    write_i16(&mut generic_parameter, 8, -1);
+    add_table(&mut data, GENERIC_PARAMETERS_PAIR, &generic_parameter);
+    add_table(&mut data, GENERIC_CONSTRAINTS_PAIR, &[]);
+
+    let mut generic_container = vec![0_u8; 16];
+    write_i32(&mut generic_container, 0, 0);
+    write_i32(&mut generic_container, 4, 1);
+    write_i32(&mut generic_container, 8, 0);
+    write_i32(&mut generic_container, 12, 0);
+    add_table(&mut data, GENERIC_CONTAINERS_PAIR, &generic_container);
+
+    let mut interface = vec![0_u8; 4];
+    write_i32(&mut interface, 0, 0);
+    add_table(&mut data, INTERFACES_PAIR, &interface);
+
     let mut ty = vec![0_u8; 88];
     write_u32(&mut ty, 0, 18);
     write_u32(&mut ty, 4, 15);
     write_i32(&mut ty, 12, -1);
     write_i32(&mut ty, 16, -1);
-    write_i32(&mut ty, 24, -1);
+    write_i32(&mut ty, 20, -1);
+    write_i32(&mut ty, 24, 0);
     write_i32(&mut ty, 32, 0);
     write_i32(&mut ty, 36, 0);
+    write_i32(&mut ty, 44, 0);
+    write_i32(&mut ty, 52, 0);
     write_u16(&mut ty, 64, 1);
+    write_u16(&mut ty, 66, 1);
     write_u16(&mut ty, 68, 1);
+    write_u16(&mut ty, 76, 1);
     add_table(&mut data, TYPES_PAIR, &ty);
 
     let mut image = vec![0_u8; 40];
@@ -109,6 +148,10 @@ fn read_u32(data: &[u8], offset: usize) -> u32 {
 }
 
 fn write_u16(data: &mut [u8], offset: usize, value: u16) {
+    data[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_i16(data: &mut [u8], offset: usize, value: i16) {
     data[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
 

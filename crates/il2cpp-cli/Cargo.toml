@@ -16,6 +16,7 @@ anyhow.workspace = true
 clap.workspace = true
 il2cpp-core = { path = "../il2cpp-core" }
 il2cpp-disasm = { path = "../il2cpp-disasm" }
+il2cpp-export = { path = "../il2cpp-export" }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

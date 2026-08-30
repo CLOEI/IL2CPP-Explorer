@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 
 pub use heuristic::HeuristicResolver;
 pub use manual::ManualResolver;
-pub use native::{CodeGenModule, MethodAddress, NativeMethodIndex, RegistrationInfo};
+pub use native::{
+    CodeGenModule, MethodAddress, NativeMethodIndex, RegistrationInfo, RuntimeMetadata,
+};
 pub use resolver::RegistrationResolver;
 pub use symbols::SymbolResolver;
 

@@ -10,7 +10,10 @@ use std::path::Path;
 pub use header::{METADATA_SANITY, MetadataHeader, MetadataTable, MetadataVersion};
 pub use reader::MetadataReader;
 
-use crate::model::{Assembly, Field, Image, Method, Parameter, TypeDefinition};
+use crate::model::{
+    Assembly, Field, GenericContainer, GenericParameter, Image, Method, Parameter, Property,
+    TypeDefinition,
+};
 use crate::{Error, Result};
 
 /// Record widths selected by metadata-version parser.
@@ -34,6 +37,9 @@ pub struct Metadata {
     pub methods: Vec<Method>,
     pub fields: Vec<Field>,
     pub parameters: Vec<Parameter>,
+    pub properties: Vec<Property>,
+    pub generic_containers: Vec<GenericContainer>,
+    pub generic_parameters: Vec<GenericParameter>,
     header: MetadataHeader,
     data: Vec<u8>,
 }

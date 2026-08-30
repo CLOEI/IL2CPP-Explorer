@@ -14,5 +14,5 @@ pub struct Field {
     pub name: String,
     pub field_type: TypeIndex,
     pub token: u32,
-    pub offset: Option<u64>,
+    pub offset: Option<i32>,
 }

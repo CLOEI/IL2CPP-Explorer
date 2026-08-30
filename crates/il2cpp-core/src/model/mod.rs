@@ -2,16 +2,22 @@
 
 mod assembly;
 mod field;
+mod generic;
 mod image;
 mod method;
 mod parameter;
 mod property;
 mod ty;
+mod type_ref;
 
 pub use assembly::{Assembly, AssemblyId};
 pub use field::{Field, FieldId};
+pub use generic::{
+    GenericContainer, GenericContainerId, GenericOwner, GenericParameter, GenericParameterId,
+};
 pub use image::{Image, ImageId};
 pub use method::{Method, MethodId};
 pub use parameter::{Parameter, ParameterId};
 pub use property::{Property, PropertyId};
-pub use ty::{TypeDefinition, TypeId, TypeIndex};
+pub use ty::{TypeDefinition, TypeId, TypeIndex, TypeKind};
+pub use type_ref::TypeRef;

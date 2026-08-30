@@ -21,6 +21,10 @@ pub enum Error {
     AddressTranslationFailed,
     #[error("IL2CPP registration structures were not found")]
     RegistrationNotFound,
+    #[error("invalid IL2CPP runtime type index {0}")]
+    InvalidTypeIndex(usize),
+    #[error("recursive IL2CPP runtime type at {0:#x}")]
+    RecursiveTypeReference(u64),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }

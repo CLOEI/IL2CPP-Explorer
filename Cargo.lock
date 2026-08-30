@@ -159,6 +159,7 @@ dependencies = [
  "clap",
  "il2cpp-core",
  "il2cpp-disasm",
+ "il2cpp-export",
  "serde",
  "serde_json",
  "tracing",

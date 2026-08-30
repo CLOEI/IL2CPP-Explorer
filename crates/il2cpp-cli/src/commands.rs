@@ -1,7 +1,8 @@
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use il2cpp_core::analysis::Il2CppProject;
+use il2cpp_core::analysis::{Il2CppProject, TypeResolver};
 use il2cpp_core::binary::{Architecture, BinaryImage, ElfImage, Endianness};
 use il2cpp_core::metadata::{Metadata, MetadataHeader};
 use il2cpp_core::model::Method;
@@ -10,11 +11,22 @@ use il2cpp_disasm::{
     Arm64Disassembler, ControlFlow, FunctionInspection, FunctionInspector, FunctionRangeSource,
     Instruction, disassemble_executable_window,
 };
+use il2cpp_export::{DumpCsExporter, DumpCsOptions, ExportContext, Exporter};
 use serde_json::{Value, json};
 
 const TARGET_BINARY: &str = "./libil2cpp.so";
 const TARGET_METADATA: &str = "./global-metadata.dat";
 const DEFAULT_TYPE_LIMIT: usize = 50;
+
+pub(crate) struct DumpFlags {
+    pub no_addresses: bool,
+    pub file_offsets: bool,
+    pub no_tokens: bool,
+    pub indices: bool,
+    pub no_field_offsets: bool,
+    pub fully_qualified_types: bool,
+    pub verbose: bool,
+}
 
 pub(crate) fn target(verbose: bool) -> Result<()> {
     let (binary, metadata) = load_target()?;
@@ -493,6 +505,110 @@ pub(crate) fn calls(
             }
         }
     }
+    Ok(())
+}
+
+pub(crate) fn dump(
+    input: &Path,
+    metadata_path: Option<&Path>,
+    output: Option<&Path>,
+    flags: DumpFlags,
+) -> Result<()> {
+    if flags.verbose {
+        eprintln!("Resolving metadata...");
+    }
+    let (binary, metadata) = match metadata_path {
+        Some(metadata_path) => (
+            Some(
+                ElfImage::open(input)
+                    .with_context(|| format!("failed to load binary '{}'", input.display()))?,
+            ),
+            load_metadata(metadata_path)?,
+        ),
+        None => (None, load_metadata(input)?),
+    };
+    if let Some(binary) = &binary {
+        ensure_arm64(binary)?;
+    }
+    if flags.verbose {
+        eprintln!("Resolving types...");
+    }
+    let registration = binary
+        .as_ref()
+        .map(|binary| RegistrationInfo::discover(binary, &metadata))
+        .transpose()
+        .context("failed to discover native registrations")?;
+    let runtime = match (&binary, &registration) {
+        (Some(binary), Some(registration)) => Some(
+            registration
+                .runtime_metadata(binary, &metadata)
+                .context("failed to read runtime type metadata")?,
+        ),
+        _ => None,
+    };
+    let native_methods = match (&binary, &registration) {
+        (Some(binary), Some(registration)) => Some(
+            NativeMethodIndex::build(binary, &metadata, registration)
+                .context("failed to index native methods")?,
+        ),
+        _ => None,
+    };
+    let resolver = match (&binary, &runtime) {
+        (Some(binary), Some(runtime)) => TypeResolver::with_runtime(&metadata, binary, runtime),
+        _ => TypeResolver::metadata_only(&metadata),
+    };
+    let context = ExportContext {
+        metadata: &metadata,
+        types: &resolver,
+        native_methods: native_methods.as_ref(),
+    };
+    let mut options = DumpCsOptions::default();
+    options.include_addresses &= !flags.no_addresses;
+    options.include_file_offsets |= flags.file_offsets;
+    options.include_tokens &= !flags.no_tokens;
+    options.include_indices |= flags.indices;
+    options.include_field_offsets &= !flags.no_field_offsets;
+    options.fully_qualified_types |= flags.fully_qualified_types;
+    let exporter = DumpCsExporter::new(options);
+
+    if flags.verbose {
+        eprintln!("Writing dump.cs...");
+    }
+    let mut writer: Box<dyn Write> = match output {
+        Some(path) => Box::new(BufWriter::new(std::fs::File::create(path).with_context(
+            || format!("failed to create dump output '{}'", path.display()),
+        )?)),
+        None => Box::new(BufWriter::new(std::io::stdout().lock())),
+    };
+    let summary = exporter.export(&context, &mut writer)?;
+    writer.flush()?;
+
+    let mut summary_output: Box<dyn Write> = if output.is_some() {
+        Box::new(std::io::stdout().lock())
+    } else {
+        Box::new(std::io::stderr().lock())
+    };
+    writeln!(summary_output, "dump.cs generated\n")?;
+    if let Some(path) = output {
+        writeln!(summary_output, "Output:\n  {}\n", path.display())?;
+    } else {
+        writeln!(summary_output, "Output:\n  stdout\n")?;
+    }
+    writeln!(summary_output, "Assemblies: {}", summary.assemblies)?;
+    writeln!(summary_output, "Types:      {}", summary.types)?;
+    writeln!(summary_output, "Fields:     {}", summary.fields)?;
+    writeln!(summary_output, "Properties: {}", summary.properties)?;
+    writeln!(summary_output, "Methods:    {}", summary.methods)?;
+    writeln!(
+        summary_output,
+        "\nNative methods with addresses:\n  {}",
+        summary.native_methods
+    )?;
+    writeln!(
+        summary_output,
+        "\nUnresolved type references:\n  {}",
+        summary.unresolved_type_references
+    )?;
     Ok(())
 }
 

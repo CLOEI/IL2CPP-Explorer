@@ -1,8 +1,9 @@
 use crate::metadata::versions;
 use crate::metadata::{Metadata, MetadataReader, string_at};
 use crate::model::{
-    Assembly, AssemblyId, Field, FieldId, Image, ImageId, Method, MethodId, Parameter, ParameterId,
-    TypeDefinition, TypeId, TypeIndex,
+    Assembly, AssemblyId, Field, FieldId, GenericContainer, GenericContainerId, GenericOwner,
+    GenericParameter, GenericParameterId, Image, ImageId, Method, MethodId, Parameter, ParameterId,
+    Property, PropertyId, TypeDefinition, TypeId, TypeIndex,
 };
 use crate::{Error, Result};
 
@@ -40,6 +41,45 @@ pub(super) fn parse(data: Vec<u8>) -> Result<Metadata> {
         raw.parameters.len(),
         "method parameters",
     )?;
+    let property_owners = assign_ranges(
+        raw.types
+            .iter()
+            .map(|ty| (ty.property_start, ty.property_count as usize)),
+        raw.properties.len(),
+        "type properties",
+    )?;
+    let mut nested_types = vec![Vec::new(); raw.types.len()];
+    let mut nested_in = vec![None; raw.types.len()];
+    for (owner, ty) in raw.types.iter().enumerate() {
+        for entry in checked_range(
+            ty.nested_types_start,
+            ty.nested_type_count as usize,
+            raw.nested_types.len(),
+            "type nested types",
+        )? {
+            let nested = checked_index(
+                raw.nested_types[entry],
+                raw.types.len(),
+                "nested type definition",
+            )?;
+            if nested == owner || nested_in[nested].replace(TypeId(owner)).is_some() {
+                return Err(Error::InvalidMetadataTable("nested type ownership"));
+            }
+            nested_types[owner].push(TypeId(nested));
+        }
+    }
+    for index in 0..raw.types.len() {
+        let mut current = Some(TypeId(index));
+        for _ in 0..=raw.types.len() {
+            let Some(type_id) = current else {
+                break;
+            };
+            current = nested_in[type_id.0];
+        }
+        if current.is_some() {
+            return Err(Error::InvalidMetadataTable("nested type ownership"));
+        }
+    }
 
     let assemblies = raw
         .assemblies
@@ -101,20 +141,45 @@ pub(super) fn parse(data: Vec<u8>) -> Result<Metadata> {
             )?
             .map(MethodId)
             .collect();
+            let properties = checked_range(
+                ty.property_start,
+                ty.property_count as usize,
+                raw.properties.len(),
+                "type properties",
+            )?
+            .map(PropertyId)
+            .collect();
+            let interfaces = checked_range(
+                ty.interfaces_start,
+                ty.interfaces_count as usize,
+                raw.interfaces.len(),
+                "type interfaces",
+            )?
+            .map(|index| required_type_index(raw.interfaces[index], "interface type"))
+            .collect::<Result<Vec<_>>>()?;
             Ok(TypeDefinition {
                 id: TypeId(index),
                 image: ImageId(type_owners[index]),
                 namespace: string_at(&data, &header, ty.namespace_index)?.to_owned(),
                 name: string_at(&data, &header, ty.name_index)?.to_owned(),
+                byval_type: required_type_index(ty.byval_type_index, "type byval type")?,
                 declaring_type: optional_type_index(ty.declaring_type_index)?,
                 parent: optional_type_index(ty.parent_index)?,
+                element_type: optional_type_index(ty.element_type_index)?,
                 generic_container_index: optional_checked_index(
                     ty.generic_container_index,
-                    raw.generic_container_count,
+                    raw.generic_containers.len(),
                     "type generic container",
                 )?,
+                flags: ty.flags,
+                bitfield: ty.bitfield,
+                token: ty.token,
                 methods,
                 fields,
+                properties,
+                nested_types: nested_types[index].clone(),
+                nested_in: nested_in[index],
+                interfaces,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -180,7 +245,7 @@ pub(super) fn parse(data: Vec<u8>) -> Result<Metadata> {
                 parameters,
                 generic_container_index: optional_checked_index(
                     method.generic_container_index,
-                    raw.generic_container_count,
+                    raw.generic_containers.len(),
                     "method generic container",
                 )?,
                 token: method.token,
@@ -193,6 +258,132 @@ pub(super) fn parse(data: Vec<u8>) -> Result<Metadata> {
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let properties = raw
+        .properties
+        .iter()
+        .enumerate()
+        .map(|(index, property)| {
+            let declaring_type = TypeId(property_owners[index]);
+            let owner = &raw.types[declaring_type.0];
+            let getter = property_accessor(
+                property.getter,
+                owner.method_start,
+                owner.method_count,
+                raw.methods.len(),
+            )?;
+            let setter = property_accessor(
+                property.setter,
+                owner.method_start,
+                owner.method_count,
+                raw.methods.len(),
+            )?;
+            Ok(Property {
+                id: PropertyId(index),
+                declaring_type,
+                name: string_at(&data, &header, property.name_index)?.to_owned(),
+                getter,
+                setter,
+                attributes: property.attributes,
+                token: property.token,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let generic_parameters = raw
+        .generic_parameters
+        .iter()
+        .enumerate()
+        .map(|(index, parameter)| {
+            let container = checked_index(
+                parameter.owner_index,
+                raw.generic_containers.len(),
+                "generic parameter owner",
+            )?;
+            let constraints = checked_range(
+                i32::from(parameter.constraints_start),
+                usize::try_from(parameter.constraints_count)
+                    .map_err(|_| Error::InvalidMetadataTable("generic parameter constraints"))?,
+                raw.generic_parameter_constraints.len(),
+                "generic parameter constraints",
+            )?
+            .map(|constraint| {
+                required_type_index(
+                    raw.generic_parameter_constraints[constraint],
+                    "generic parameter constraint type",
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+            Ok(GenericParameter {
+                id: GenericParameterId(index),
+                container: GenericContainerId(container),
+                name: string_at(&data, &header, parameter.name_index)?.to_owned(),
+                position: parameter.position,
+                flags: parameter.flags,
+                constraints,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let generic_containers = raw
+        .generic_containers
+        .iter()
+        .enumerate()
+        .map(|(index, container)| {
+            let count = usize::try_from(container.type_argument_count)
+                .map_err(|_| Error::InvalidMetadataTable("generic container argument count"))?;
+            let parameters = checked_range(
+                container.generic_parameter_start,
+                count,
+                raw.generic_parameters.len(),
+                "generic container parameters",
+            )?
+            .map(|parameter| {
+                if generic_parameters[parameter].container.0 != index {
+                    return Err(Error::InvalidMetadataTable(
+                        "generic parameter/container relationship",
+                    ));
+                }
+                Ok(GenericParameterId(parameter))
+            })
+            .collect::<Result<Vec<_>>>()?;
+            let owner = match container.is_method {
+                0 => GenericOwner::Type(TypeId(checked_index(
+                    container.owner_index,
+                    raw.types.len(),
+                    "generic container type owner",
+                )?)),
+                1 => GenericOwner::Method(MethodId(checked_index(
+                    container.owner_index,
+                    raw.methods.len(),
+                    "generic container method owner",
+                )?)),
+                _ => return Err(Error::InvalidMetadataTable("generic container owner kind")),
+            };
+            Ok(GenericContainer {
+                id: GenericContainerId(index),
+                owner,
+                parameters,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    for ty in &types {
+        if let Some(container) = ty.generic_container_index
+            && generic_containers[container].owner != GenericOwner::Type(ty.id)
+        {
+            return Err(Error::InvalidMetadataTable("type generic container owner"));
+        }
+    }
+    for method in &methods {
+        if let Some(container) = method.generic_container_index
+            && generic_containers[container].owner != GenericOwner::Method(method.id)
+        {
+            return Err(Error::InvalidMetadataTable(
+                "method generic container owner",
+            ));
+        }
+    }
+
     Ok(Metadata {
         version,
         assemblies,
@@ -201,6 +392,9 @@ pub(super) fn parse(data: Vec<u8>) -> Result<Metadata> {
         methods,
         fields,
         parameters,
+        properties,
+        generic_containers,
+        generic_parameters,
         header,
         data,
     })
@@ -277,4 +471,25 @@ fn optional_index(index: i32) -> Result<Option<usize>> {
     usize::try_from(index)
         .map(Some)
         .map_err(|_| Error::InvalidMetadata)
+}
+
+fn property_accessor(
+    relative: i32,
+    method_start: i32,
+    method_count: u16,
+    method_total: usize,
+) -> Result<Option<MethodId>> {
+    let Some(relative) = optional_index(relative)? else {
+        return Ok(None);
+    };
+    if relative >= usize::from(method_count) {
+        return Err(Error::InvalidMetadataTable("property accessor"));
+    }
+    let start = usize::try_from(method_start)
+        .map_err(|_| Error::InvalidMetadataTable("property accessor"))?;
+    let index = start
+        .checked_add(relative)
+        .filter(|index| *index < method_total)
+        .ok_or(Error::InvalidMetadataTable("property accessor"))?;
+    Ok(Some(MethodId(index)))
 }

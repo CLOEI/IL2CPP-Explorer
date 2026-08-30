@@ -14,4 +14,6 @@ pub struct Property {
     pub name: String,
     pub getter: Option<MethodId>,
     pub setter: Option<MethodId>,
+    pub attributes: u32,
+    pub token: u32,
 }
