@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 use il2cpp_core::analysis::Il2CppProject;
 use il2cpp_core::binary::{BinaryImage, ElfImage};
 use il2cpp_core::metadata::{Metadata, MetadataHeader};
+use il2cpp_core::model::Method;
+use il2cpp_core::registration::{MethodAddress, RegistrationInfo};
 
 const TARGET_BINARY: &str = "./libil2cpp.so";
 const TARGET_METADATA: &str = "./global-metadata.dat";
@@ -11,6 +13,9 @@ const DEFAULT_TYPE_LIMIT: usize = 50;
 
 pub(crate) fn target(verbose: bool) -> Result<()> {
     let (binary, metadata) = load_target()?;
+    let registration = RegistrationInfo::discover(&binary, &metadata)
+        .context("failed to discover native registrations")?;
+    let mapped_methods = count_mapped_methods(&binary, &metadata, &registration)?;
     println!("IL2CPP Explorer Target\n");
     print_binary_summary(Path::new(TARGET_BINARY), &binary);
     println!();
@@ -29,8 +34,16 @@ pub(crate) fn target(verbose: bool) -> Result<()> {
     println!("\nStatus");
     println!("  Metadata parsing:       OK");
     println!("  Binary parsing:         OK");
-    println!("  Native address mapping: NOT IMPLEMENTED");
+    println!("  Registration discovery: OK");
+    println!(
+        "  Native address mapping: OK ({mapped_methods}/{} methods)",
+        metadata.methods.len()
+    );
+    println!();
+    print_registration_summary(&binary, &registration);
     if verbose {
+        println!();
+        print_modules(&registration);
         println!();
         print_metadata_tables(metadata.header());
     }
@@ -39,6 +52,8 @@ pub(crate) fn target(verbose: bool) -> Result<()> {
 
 pub(crate) fn inspect_target() -> Result<()> {
     let (binary, metadata) = load_target()?;
+    let registration = RegistrationInfo::discover(&binary, &metadata)
+        .context("failed to discover native registrations")?;
     println!("IL2CPP Explorer Target Inspection\n");
     print_binary_summary(Path::new(TARGET_BINARY), &binary);
     println!();
@@ -46,6 +61,10 @@ pub(crate) fn inspect_target() -> Result<()> {
     println!();
     print_metadata_tables(metadata.header());
     print_examples(&metadata);
+    println!();
+    print_registration_summary(&binary, &registration);
+    println!();
+    print_modules(&registration);
     Ok(())
 }
 
@@ -214,11 +233,113 @@ pub(crate) fn info(binary: &Path, metadata: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn registrations(binary_path: &Path, metadata_path: &Path, verbose: bool) -> Result<()> {
+    let (binary, metadata, registration) = load_native(binary_path, metadata_path)?;
+    let mapped_methods = count_mapped_methods(&binary, &metadata, &registration)?;
+
+    println!("IL2CPP Explorer Registrations\n");
+    print_registration_summary(&binary, &registration);
+    println!(
+        "  Mapped methods:        {mapped_methods}/{}",
+        metadata.methods.len()
+    );
+    if verbose {
+        println!();
+        print_modules(&registration);
+    }
+    Ok(())
+}
+
+pub(crate) fn method(binary_path: &Path, metadata_path: &Path, query: &str) -> Result<()> {
+    let (binary, metadata, registration) = load_native(binary_path, metadata_path)?;
+    let matches = find_methods(&metadata, query);
+    if matches.is_empty() {
+        anyhow::bail!("no method matches '{query}'");
+    }
+
+    println!("IL2CPP Explorer Methods\n");
+    for method in matches.iter().take(DEFAULT_TYPE_LIMIT) {
+        print_method(&binary, &metadata, &registration, method)?;
+    }
+    if matches.len() > DEFAULT_TYPE_LIMIT {
+        println!(
+            "Showing {} of {} matches. Use a metadata method index for one exact result.",
+            DEFAULT_TYPE_LIMIT,
+            matches.len()
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn address(binary_path: &Path, metadata_path: &Path, value: &str) -> Result<()> {
+    let virtual_address = parse_address(value)?;
+    let (binary, metadata, registration) = load_native(binary_path, metadata_path)?;
+    let relative_address = virtual_address
+        .checked_sub(binary.image_base())
+        .context("address is below the binary image base")?;
+    let segment = binary
+        .segments()
+        .iter()
+        .find(|segment| {
+            segment.kind == "LOAD"
+                && virtual_address
+                    .checked_sub(segment.virtual_address)
+                    .is_some_and(|relative| relative < segment.virtual_size)
+        })
+        .context("address is not mapped by a LOAD segment")?;
+    let file_offset = binary.virtual_to_offset(virtual_address);
+
+    println!("IL2CPP Explorer Address\n");
+    println!("Address");
+    println!("  VA:          {virtual_address:#018x}");
+    println!("  RVA:         {relative_address:#018x}");
+    match file_offset {
+        Some(offset) => println!("  File offset: {offset:#018x}"),
+        None => println!("  File offset: not stored"),
+    }
+    println!("  Permissions: {}", segment.permissions);
+
+    let mut matches = Vec::new();
+    for method in &metadata.methods {
+        if registration
+            .resolve_method(&binary, &metadata, method.id)?
+            .is_some_and(|address| address.virtual_address == virtual_address)
+        {
+            matches.push(method);
+        }
+    }
+    println!("\nMethods");
+    if matches.is_empty() {
+        println!("  No method starts at this address.");
+    } else {
+        for method in matches {
+            println!(
+                "  [{}] {}",
+                method.id.0,
+                full_method_name(&metadata, method)
+            );
+        }
+    }
+    Ok(())
+}
+
 fn load_target() -> Result<(ElfImage, Metadata)> {
     let binary = ElfImage::open(TARGET_BINARY).context("failed to load ./libil2cpp.so")?;
     let metadata =
         Metadata::open(TARGET_METADATA).context("failed to load ./global-metadata.dat")?;
     Ok((binary, metadata))
+}
+
+fn load_native(
+    binary_path: &Path,
+    metadata_path: &Path,
+) -> Result<(ElfImage, Metadata, RegistrationInfo)> {
+    let binary = ElfImage::open(binary_path)
+        .with_context(|| format!("failed to load binary '{}'", binary_path.display()))?;
+    let metadata = load_metadata(metadata_path)?;
+    let registration = RegistrationInfo::discover(&binary, &metadata)
+        .context("failed to discover native registrations")?;
+    Ok((binary, metadata, registration))
 }
 
 fn load_metadata(path: &Path) -> Result<Metadata> {
@@ -281,6 +402,140 @@ fn print_examples(metadata: &Metadata) {
     for (index, method) in metadata.methods.iter().take(5).enumerate() {
         let ty = &metadata.types[method.declaring_type.0];
         println!("  [{index}] {}::{}", full_type_name(ty), method.name);
+    }
+}
+
+fn print_registration_summary(binary: &ElfImage, registration: &RegistrationInfo) {
+    println!("Registrations");
+    print_optional_native_address(
+        "Code registration",
+        registration.registration.code_registration,
+        binary,
+    );
+    print_optional_native_address(
+        "Metadata registration",
+        registration.registration.metadata_registration,
+        binary,
+    );
+    print_native_address("CodeGenModule array", registration.codegen_modules, binary);
+    println!("  Modules:               {}", registration.modules.len());
+    println!(
+        "  Method pointer slots:  {}",
+        registration
+            .modules
+            .iter()
+            .map(|module| u64::from(module.method_pointer_count))
+            .sum::<u64>()
+    );
+}
+
+fn print_modules(registration: &RegistrationInfo) {
+    println!("CodeGenModules");
+    for (index, module) in registration.modules.iter().enumerate() {
+        let pointers = module
+            .method_pointers
+            .map_or_else(|| "none".to_owned(), |address| format!("{address:#x}"));
+        println!(
+            "  [{index:>2}] {:<48} module={:#x} methods={} pointers={pointers}",
+            module.name, module.address, module.method_pointer_count
+        );
+    }
+}
+
+fn print_optional_native_address(label: &str, address: Option<u64>, binary: &ElfImage) {
+    match address {
+        Some(address) => print_native_address(label, address, binary),
+        None => println!("  {label:<22} not found"),
+    }
+}
+
+fn print_native_address(label: &str, address: u64, binary: &ElfImage) {
+    let file = binary
+        .virtual_to_offset(address)
+        .map_or_else(|| "not stored".to_owned(), |offset| format!("{offset:#x}"));
+    println!("  {label:<22} VA={address:#x} file={file}");
+}
+
+fn count_mapped_methods(
+    binary: &ElfImage,
+    metadata: &Metadata,
+    registration: &RegistrationInfo,
+) -> Result<usize> {
+    let mut mapped = 0;
+    for method in &metadata.methods {
+        if registration
+            .resolve_method(binary, metadata, method.id)?
+            .is_some()
+        {
+            mapped += 1;
+        }
+    }
+    Ok(mapped)
+}
+
+fn find_methods<'a>(metadata: &'a Metadata, query: &str) -> Vec<&'a Method> {
+    if query.bytes().all(|byte| byte.is_ascii_digit()) {
+        return query
+            .parse::<usize>()
+            .ok()
+            .and_then(|index| metadata.methods.get(index))
+            .into_iter()
+            .collect();
+    }
+
+    let query = query.to_lowercase();
+    metadata
+        .methods
+        .iter()
+        .filter(|method| {
+            full_method_name(metadata, method)
+                .to_lowercase()
+                .contains(&query)
+        })
+        .collect()
+}
+
+fn print_method(
+    binary: &ElfImage,
+    metadata: &Metadata,
+    registration: &RegistrationInfo,
+    method: &Method,
+) -> Result<()> {
+    let declaring_type = &metadata.types[method.declaring_type.0];
+    let image = &metadata.images[declaring_type.image.0];
+    println!("[{}] {}", method.id.0, full_method_name(metadata, method));
+    println!("  Image:        {}", image.name);
+    println!("  Token:        {:#010x}", method.token);
+    match registration.resolve_method(binary, metadata, method.id)? {
+        Some(address) => print_method_address(&address),
+        None => println!("  Native:       not generated"),
+    }
+    println!();
+    Ok(())
+}
+
+fn print_method_address(address: &MethodAddress) {
+    println!("  Pointer index: {}", address.pointer_index);
+    println!("  VA:            {:#018x}", address.virtual_address);
+    println!("  RVA:           {:#018x}", address.relative_address);
+    println!("  File offset:   {:#018x}", address.file_offset);
+}
+
+fn full_method_name(metadata: &Metadata, method: &Method) -> String {
+    let declaring_type = &metadata.types[method.declaring_type.0];
+    format!("{}::{}", full_type_name(declaring_type), method.name)
+}
+
+fn parse_address(value: &str) -> Result<u64> {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        u64::from_str_radix(hex, 16).with_context(|| format!("invalid address '{value}'"))
+    } else {
+        value
+            .parse::<u64>()
+            .with_context(|| format!("invalid address '{value}'"))
     }
 }
 

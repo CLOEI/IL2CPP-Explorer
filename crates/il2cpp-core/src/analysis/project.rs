@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::Result;
 use crate::binary::{Architecture, BinaryFormat, BinaryImage, ElfImage};
 use crate::metadata::{Metadata, MetadataVersion};
-use crate::registration::Registration;
+use crate::registration::{Registration, RegistrationInfo};
 
 /// A loaded executable and its matching normalized IL2CPP metadata.
 pub struct Il2CppProject {
@@ -55,5 +55,15 @@ impl Il2CppProject {
     /// Returns resolved registration addresses, if discovery has run.
     pub fn registration(&self) -> Option<&Registration> {
         self.registration.as_ref()
+    }
+
+    /// Discovers native registration roots and stores them on this project.
+    pub fn discover_registration(&mut self) -> Result<&Registration> {
+        let info = RegistrationInfo::discover(self.binary.as_ref(), &self.metadata)?;
+        self.registration = Some(info.registration);
+        Ok(self
+            .registration
+            .as_ref()
+            .expect("registration was assigned"))
     }
 }

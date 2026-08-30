@@ -56,6 +56,28 @@ enum Command {
     TypeInfo { metadata: PathBuf, name: String },
     /// Show basic executable and metadata information.
     Info { binary: PathBuf, metadata: PathBuf },
+    /// Discover IL2CPP native registration structures.
+    Registrations {
+        binary: PathBuf,
+        metadata: PathBuf,
+        /// Print every validated CodeGenModule.
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Resolve matching metadata methods to native addresses.
+    Method {
+        binary: PathBuf,
+        metadata: PathBuf,
+        /// Metadata method index or a Type::Method text query.
+        query: String,
+    },
+    /// Find methods mapped to one native virtual address.
+    Address {
+        binary: PathBuf,
+        metadata: PathBuf,
+        /// Virtual address in decimal or 0x-prefixed hexadecimal.
+        address: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -80,5 +102,20 @@ fn main() -> Result<()> {
         } => commands::types(&metadata, query.as_deref(), all),
         Command::TypeInfo { metadata, name } => commands::type_info(&metadata, &name),
         Command::Info { binary, metadata } => commands::info(&binary, &metadata),
+        Command::Registrations {
+            binary,
+            metadata,
+            verbose,
+        } => commands::registrations(&binary, &metadata, verbose),
+        Command::Method {
+            binary,
+            metadata,
+            query,
+        } => commands::method(&binary, &metadata, &query),
+        Command::Address {
+            binary,
+            metadata,
+            address,
+        } => commands::address(&binary, &metadata, &address),
     }
 }

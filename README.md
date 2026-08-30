@@ -12,8 +12,8 @@ access, analysis, disassembly, build comparison, export, and application concern
 
 **Early stage.** The repository currently parses version 31 metadata headers, strings, images,
 assemblies, types, fields, methods, and parameters. ELF64 inspection is available for the current
-Android/AArch64 development target. Native registration and method-address mapping are not yet
-implemented.
+Android/AArch64 development target, including relocation-based registration discovery and native
+method-address mapping.
 
 ## Goals
 
@@ -69,6 +69,9 @@ cargo run -p il2cpp-cli -- images ./global-metadata.dat
 cargo run -p il2cpp-cli -- assemblies ./global-metadata.dat
 cargo run -p il2cpp-cli -- types ./global-metadata.dat Player
 cargo run -p il2cpp-cli -- type ./global-metadata.dat MainPlayer
+cargo run -p il2cpp-cli -- registrations ./libil2cpp.so ./global-metadata.dat --verbose
+cargo run -p il2cpp-cli -- method ./libil2cpp.so ./global-metadata.dat System.String::Equals
+cargo run -p il2cpp-cli -- address ./libil2cpp.so ./global-metadata.dat 0x2ce8760
 ```
 
 Root `libil2cpp.so` and `global-metadata.dat` files are local-only development fixtures and are
@@ -99,8 +102,8 @@ cargo build --workspace
 - [x] Types
 - [x] Fields
 - [x] Methods
-- [ ] Code registration discovery
-- [ ] Native method address mapping
+- [x] Code registration discovery
+- [x] Native method address mapping
 - [ ] Search
 - [ ] JSON export
 - [ ] Desktop UI

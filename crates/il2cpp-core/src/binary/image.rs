@@ -106,6 +106,13 @@ pub struct SegmentInfo {
     pub permissions: Permissions,
 }
 
+/// One base-relative pointer relocation applied when an image is loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RelativeRelocation {
+    pub address: u64,
+    pub addend: i64,
+}
+
 impl fmt::Display for BinaryFormat {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -133,6 +140,8 @@ pub trait BinaryImage {
     fn sections(&self) -> &[SectionInfo];
 
     fn segments(&self) -> &[SegmentInfo];
+
+    fn relative_relocations(&self) -> &[RelativeRelocation];
 
     fn is_stripped(&self) -> bool;
 

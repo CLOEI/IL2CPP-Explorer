@@ -7,8 +7,8 @@ mod pe;
 
 pub use elf::ElfImage;
 pub use image::{
-    Architecture, BinaryFormat, BinaryImage, BinaryKind, Endianness, Permissions, SectionInfo,
-    SegmentInfo,
+    Architecture, BinaryFormat, BinaryImage, BinaryKind, Endianness, Permissions,
+    RelativeRelocation, SectionInfo, SegmentInfo,
 };
 pub use macho::MachOImage;
 pub use pe::PeImage;

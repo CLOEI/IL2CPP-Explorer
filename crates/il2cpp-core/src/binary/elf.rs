@@ -4,8 +4,8 @@ use object::read::elf::ProgramHeader as _;
 use object::{BinaryFormat as ObjectFormat, Object, ObjectSection, ObjectSegment};
 
 use super::{
-    Architecture, BinaryFormat, BinaryImage, BinaryKind, Endianness, Permissions, SectionInfo,
-    SegmentInfo,
+    Architecture, BinaryFormat, BinaryImage, BinaryKind, Endianness, Permissions,
+    RelativeRelocation, SectionInfo, SegmentInfo,
 };
 use crate::{Error, Result};
 
@@ -29,6 +29,7 @@ pub struct ElfImage {
     segments: Vec<Segment>,
     program_segments: Vec<SegmentInfo>,
     sections: Vec<SectionInfo>,
+    relative_relocations: Vec<RelativeRelocation>,
     section_count: usize,
     stripped: bool,
 }
@@ -162,6 +163,8 @@ impl ElfImage {
             object::ObjectKind::Relocatable => BinaryKind::Relocatable,
             _ => BinaryKind::Unknown,
         };
+        let relative_relocations =
+            parse_relative_relocations(&data, &program_segments, architecture, endianness)?;
         let image_base = segments
             .iter()
             .map(|segment| segment.virtual_address)
@@ -178,6 +181,7 @@ impl ElfImage {
             segments,
             program_segments,
             sections,
+            relative_relocations,
             section_count,
             stripped,
         })
@@ -219,6 +223,10 @@ impl BinaryImage for ElfImage {
 
     fn segments(&self) -> &[SegmentInfo] {
         &self.program_segments
+    }
+
+    fn relative_relocations(&self) -> &[RelativeRelocation] {
+        &self.relative_relocations
     }
 
     fn is_stripped(&self) -> bool {
@@ -304,4 +312,191 @@ fn validate_range(offset: u64, size: u64, file_size: u64) -> Result<()> {
         return Err(Error::InvalidBinary);
     }
     Ok(())
+}
+
+fn parse_relative_relocations(
+    data: &[u8],
+    segments: &[SegmentInfo],
+    architecture: Architecture,
+    endianness: Endianness,
+) -> Result<Vec<RelativeRelocation>> {
+    const DT_NULL: i64 = 0;
+    const DT_RELA: i64 = 7;
+    const DT_RELASZ: i64 = 8;
+    const DT_RELAENT: i64 = 9;
+    const ELF64_RELA_SIZE: u64 = 24;
+    const R_AARCH64_RELATIVE: u32 = 1027;
+    const R_X86_64_RELATIVE: u32 = 8;
+
+    let Some(dynamic) = segments.iter().find(|segment| segment.kind == "DYNAMIC") else {
+        return Ok(Vec::new());
+    };
+    validate_range(dynamic.file_offset, dynamic.file_size, data.len() as u64)?;
+    let dynamic_start = usize::try_from(dynamic.file_offset).map_err(|_| Error::InvalidBinary)?;
+    let dynamic_size = usize::try_from(dynamic.file_size).map_err(|_| Error::InvalidBinary)?;
+    let dynamic_bytes = data
+        .get(dynamic_start..dynamic_start + dynamic_size)
+        .ok_or(Error::InvalidBinary)?;
+
+    let mut rela_address = None;
+    let mut rela_size = None;
+    let mut rela_entry_size = ELF64_RELA_SIZE;
+    for entry in dynamic_bytes.chunks_exact(16) {
+        let tag = read_i64(entry, endianness)?;
+        let value = read_u64_bytes(&entry[8..], endianness)?;
+        match tag {
+            DT_NULL => break,
+            DT_RELA => rela_address = Some(value),
+            DT_RELASZ => rela_size = Some(value),
+            DT_RELAENT => rela_entry_size = value,
+            _ => {}
+        }
+    }
+
+    let (Some(rela_address), Some(rela_size)) = (rela_address, rela_size) else {
+        return Ok(Vec::new());
+    };
+    if rela_entry_size < ELF64_RELA_SIZE || rela_size % rela_entry_size != 0 {
+        return Err(Error::InvalidBinary);
+    }
+    let rela_offset = segments
+        .iter()
+        .filter(|segment| segment.kind == "LOAD")
+        .find_map(|segment| {
+            let relative = rela_address.checked_sub(segment.virtual_address)?;
+            let remaining = segment.file_size.checked_sub(relative)?;
+            let offset = segment.file_offset.checked_add(relative)?;
+            (rela_size <= remaining).then_some(offset)
+        })
+        .ok_or(Error::InvalidBinary)?;
+    validate_range(rela_offset, rela_size, data.len() as u64)?;
+    let start = usize::try_from(rela_offset).map_err(|_| Error::InvalidBinary)?;
+    let size = usize::try_from(rela_size).map_err(|_| Error::InvalidBinary)?;
+    let entry_size = usize::try_from(rela_entry_size).map_err(|_| Error::InvalidBinary)?;
+    let bytes = data.get(start..start + size).ok_or(Error::InvalidBinary)?;
+    let relative_type = match architecture {
+        Architecture::Arm64 => R_AARCH64_RELATIVE,
+        Architecture::X86_64 => R_X86_64_RELATIVE,
+        Architecture::Unknown => return Ok(Vec::new()),
+    };
+
+    let mut relocations = Vec::new();
+    for entry in bytes.chunks_exact(entry_size) {
+        let address = read_u64_bytes(entry, endianness)?;
+        let info = read_u64_bytes(&entry[8..], endianness)?;
+        let addend = read_i64(&entry[16..], endianness)?;
+        let symbol = info >> 32;
+        let relocation_type = info as u32;
+        if symbol == 0 && relocation_type == relative_type {
+            relocations.push(RelativeRelocation { address, addend });
+        }
+    }
+    relocations.sort_unstable_by_key(|relocation| relocation.address);
+    Ok(relocations)
+}
+
+fn read_u64_bytes(bytes: &[u8], endianness: Endianness) -> Result<u64> {
+    let bytes: [u8; 8] = bytes
+        .get(..8)
+        .ok_or(Error::InvalidBinary)?
+        .try_into()
+        .map_err(|_| Error::InvalidBinary)?;
+    Ok(match endianness {
+        Endianness::Little => u64::from_le_bytes(bytes),
+        Endianness::Big => u64::from_be_bytes(bytes),
+    })
+}
+
+fn read_i64(bytes: &[u8], endianness: Endianness) -> Result<i64> {
+    let bytes: [u8; 8] = bytes
+        .get(..8)
+        .ok_or(Error::InvalidBinary)?
+        .try_into()
+        .map_err(|_| Error::InvalidBinary)?;
+    Ok(match endianness {
+        Endianness::Little => i64::from_le_bytes(bytes),
+        Endianness::Big => i64::from_be_bytes(bytes),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_aarch64_relative_rela_entries() {
+        let (mut data, segments) = rela_fixture(0x100, 24, 0x200);
+        write_u64(&mut data, 0x100, 0x300);
+        write_u64(&mut data, 0x108, 1027);
+        write_u64(&mut data, 0x110, 0x1234);
+
+        assert_eq!(
+            parse_relative_relocations(&data, &segments, Architecture::Arm64, Endianness::Little,)
+                .expect("valid RELA table"),
+            vec![RelativeRelocation {
+                address: 0x300,
+                addend: 0x1234,
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_rela_table_crossing_its_load_segment() {
+        let (data, segments) = rela_fixture(0x1f0, 24, 0x240);
+
+        assert!(matches!(
+            parse_relative_relocations(&data, &segments, Architecture::Arm64, Endianness::Little,),
+            Err(Error::InvalidBinary)
+        ));
+    }
+
+    fn rela_fixture(
+        rela_address: u64,
+        rela_size: u64,
+        data_size: usize,
+    ) -> (Vec<u8>, Vec<SegmentInfo>) {
+        let mut data = vec![0; data_size];
+        write_dynamic(&mut data, 0x40, 7, rela_address);
+        write_dynamic(&mut data, 0x50, 8, rela_size);
+        write_dynamic(&mut data, 0x60, 9, 24);
+        write_dynamic(&mut data, 0x70, 0, 0);
+        let segments = vec![
+            SegmentInfo {
+                kind: "LOAD".to_owned(),
+                file_offset: 0,
+                file_size: 0x200,
+                virtual_address: 0,
+                virtual_size: 0x200,
+                alignment: 0x1000,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute: false,
+                },
+            },
+            SegmentInfo {
+                kind: "DYNAMIC".to_owned(),
+                file_offset: 0x40,
+                file_size: 0x40,
+                virtual_address: 0x40,
+                virtual_size: 0x40,
+                alignment: 8,
+                permissions: Permissions {
+                    read: true,
+                    write: true,
+                    execute: false,
+                },
+            },
+        ];
+        (data, segments)
+    }
+
+    fn write_dynamic(data: &mut [u8], offset: usize, tag: i64, value: u64) {
+        data[offset..offset + 8].copy_from_slice(&tag.to_le_bytes());
+        write_u64(data, offset + 8, value);
+    }
+
+    fn write_u64(data: &mut [u8], offset: usize, value: u64) {
+        data[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
 }
