@@ -15,6 +15,7 @@ pub struct ExplorerState<'a> {
     pub search_results: &'a [SearchMatch],
     pub search_limited: bool,
     pub tab: &'a mut MethodTab,
+    pub tree_focus: &'a mut Option<il2cpp_core::model::TypeId>,
     pub export_status: Option<&'a str>,
 }
 
@@ -30,6 +31,7 @@ pub fn show(
         search_results,
         search_limited,
         tab,
+        tree_focus,
         export_status,
     } = state;
     let mut action = None;
@@ -43,17 +45,20 @@ pub fn show(
                 action = Some(ExplorerAction::Export);
             }
             ui.separator();
-            ui.add_sized(
+            let response = ui.add_sized(
                 [300.0, 24.0],
                 egui::TextEdit::singleline(search_query)
                     .id(egui::Id::new("global_search"))
                     .hint_text("Search types, methods, fields..."),
             );
-            if !search_query.is_empty() {
-                if let Some(result) = search::show(ui, search_results, search_limited) {
-                    action = Some(ExplorerAction::Select(result));
-                }
-            }
+            show_search_dropdown(
+                context,
+                response.rect.left_bottom(),
+                search_query,
+                search_results,
+                search_limited,
+                &mut action,
+            );
         });
     });
     egui::TopBottomPanel::bottom("status").show(context, |ui| {
@@ -79,9 +84,13 @@ pub fn show(
         .show(context, |ui| {
             ui.strong("Assemblies / Types");
             ui.separator();
-            if let Some(type_id) =
-                assembly_tree::show(ui, &data.project, &data.navigation.assemblies)
-            {
+            if let Some(type_id) = assembly_tree::show(
+                ui,
+                &data.project,
+                &data.navigation.assemblies,
+                *selected_type,
+                tree_focus,
+            ) {
                 action = Some(ExplorerAction::Select(SearchResult::Type(type_id)));
             }
         });
@@ -104,4 +113,30 @@ pub fn show(
         }
     });
     action
+}
+
+fn show_search_dropdown(
+    context: &egui::Context,
+    position: egui::Pos2,
+    query: &str,
+    results: &[SearchMatch],
+    limited: bool,
+    action: &mut Option<ExplorerAction>,
+) {
+    if query.is_empty() {
+        return;
+    }
+    egui::Area::new(egui::Id::new("global_search_results"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(position)
+        .show(context, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(420.0);
+                if results.is_empty() {
+                    ui.weak("No matches.");
+                } else if let Some(result) = search::show(ui, results, limited) {
+                    *action = Some(ExplorerAction::Select(result));
+                }
+            });
+        });
 }

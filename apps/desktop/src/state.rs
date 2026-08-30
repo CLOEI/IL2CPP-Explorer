@@ -81,9 +81,6 @@ impl NavigationIndex {
             let mut namespaces = NamespaceNode::default();
             for type_id in &image.types {
                 let ty = &metadata.types[type_id.0];
-                if ty.nested_in.is_some() {
-                    continue;
-                }
                 let mut node = &mut namespaces;
                 for segment in ty
                     .namespace

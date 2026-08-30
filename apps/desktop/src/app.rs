@@ -17,6 +17,7 @@ pub struct Il2CppExplorerApp {
     metadata_path: Option<PathBuf>,
     selected_type: Option<il2cpp_core::model::TypeId>,
     selected_method: Option<il2cpp_core::model::MethodId>,
+    tree_focus: Option<il2cpp_core::model::TypeId>,
     search_query: String,
     search_results: Vec<SearchMatch>,
     search_limited: bool,
@@ -32,6 +33,7 @@ impl Default for Il2CppExplorerApp {
             metadata_path: None,
             selected_type: None,
             selected_method: None,
+            tree_focus: None,
             search_query: String::new(),
             search_results: Vec::new(),
             search_limited: false,
@@ -45,6 +47,7 @@ impl Il2CppExplorerApp {
     fn start_load(&mut self, binary: PathBuf, metadata: PathBuf) {
         self.selected_type = None;
         self.selected_method = None;
+        self.tree_focus = None;
         self.search_query.clear();
         self.search_results.clear();
         let (sender, receiver) = mpsc::channel();
@@ -104,6 +107,7 @@ impl Il2CppExplorerApp {
             SearchResult::Type(type_id) => {
                 self.selected_type = Some(type_id);
                 self.selected_method = None;
+                self.tree_focus = Some(type_id);
             }
             SearchResult::Method(method_id) => {
                 let data = match &self.load_state {
@@ -113,6 +117,7 @@ impl Il2CppExplorerApp {
                 self.selected_type =
                     Some(data.project.metadata().methods[method_id.0].declaring_type);
                 self.selected_method = Some(method_id);
+                self.tree_focus = self.selected_type;
             }
             SearchResult::Field(field_id) => {
                 let data = match &self.load_state {
@@ -122,6 +127,7 @@ impl Il2CppExplorerApp {
                 self.selected_type =
                     Some(data.project.metadata().fields[field_id.0].declaring_type);
                 self.selected_method = None;
+                self.tree_focus = self.selected_type;
             }
         }
         self.search_query.clear();
@@ -276,6 +282,7 @@ impl eframe::App for Il2CppExplorerApp {
                         search_results: &self.search_results,
                         search_limited: self.search_limited,
                         tab: &mut self.active_method_tab,
+                        tree_focus: &mut self.tree_focus,
                         export_status: self.export_status.as_deref(),
                     },
                 ) {
