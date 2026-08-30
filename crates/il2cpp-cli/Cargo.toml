@@ -1,0 +1,19 @@
+[package]
+name = "il2cpp-cli"
+description = "Command-line interface for IL2CPP Explorer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "il2cpp-explorer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+il2cpp-core = { path = "../il2cpp-core" }
+tracing.workspace = true
+tracing-subscriber.workspace = true

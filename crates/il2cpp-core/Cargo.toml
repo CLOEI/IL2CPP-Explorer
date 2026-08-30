@@ -1,0 +1,13 @@
+[package]
+name = "il2cpp-core"
+description = "Core IL2CPP parsing, modeling, and analysis abstractions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+object.workspace = true
+serde.workspace = true
+thiserror.workspace = true

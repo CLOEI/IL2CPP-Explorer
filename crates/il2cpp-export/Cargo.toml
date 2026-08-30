@@ -1,0 +1,13 @@
+[package]
+name = "il2cpp-export"
+description = "Export interfaces for IL2CPP Explorer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+il2cpp-core = { path = "../il2cpp-core" }
+serde_json.workspace = true
