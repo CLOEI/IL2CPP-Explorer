@@ -95,22 +95,26 @@ pub fn show(
             }
         });
     egui::CentralPanel::default().show(context, |ui| {
-        if let Some(method_id) = *selected_method {
-            method_view::show(ui, data, method_id, tab);
-            if ui.button("Back to type").clicked() {
-                *selected_method = None;
-            }
-        } else if let Some(type_id) = *selected_type {
-            if let Some(method_id) = type_view::show(ui, data, type_id) {
-                *selected_method = Some(method_id);
-            }
-            ui.add_space(12.0);
-            egui::CollapsingHeader::new("C# representation").show(ui, |ui| {
-                method_view::type_csharp(ui, data, type_id);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if let Some(method_id) = *selected_method {
+                    method_view::show(ui, data, method_id, tab);
+                    if ui.button("Back to type").clicked() {
+                        *selected_method = None;
+                    }
+                } else if let Some(type_id) = *selected_type {
+                    if let Some(method_id) = type_view::show(ui, data, type_id) {
+                        *selected_method = Some(method_id);
+                    }
+                    ui.add_space(12.0);
+                    egui::CollapsingHeader::new("C# representation").show(ui, |ui| {
+                        method_view::type_csharp(ui, data, type_id);
+                    });
+                } else {
+                    project_summary::show(ui, data);
+                }
             });
-        } else {
-            project_summary::show(ui, data);
-        }
     });
     action
 }

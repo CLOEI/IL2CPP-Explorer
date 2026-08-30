@@ -74,29 +74,25 @@ pub fn show(
     ui.add_space(12.0);
     section(ui, "Methods");
     let mut selected = None;
-    egui::ScrollArea::vertical()
-        .max_height(280.0)
+    egui::Grid::new(("methods", type_id.0))
+        .striped(true)
         .show(ui, |ui| {
-            egui::Grid::new(("methods", type_id.0))
-                .striped(true)
-                .show(ui, |ui| {
-                    header(ui, ["Method", "RVA", ""]);
-                    for method_id in &ty.methods {
-                        let method = &metadata.methods[method_id.0];
-                        let label = method_label(method, &resolver, &names);
-                        if ui.selectable_label(false, label).clicked() {
-                            selected = Some(*method_id);
-                        }
-                        let address = project
-                            .native_methods()
-                            .and_then(|index| index.address_of(*method_id));
-                        ui.monospace(address.map_or_else(
-                            || "-".to_owned(),
-                            |address| format!("0x{:08X}", address.relative_address),
-                        ));
-                        ui.end_row();
-                    }
-                });
+            header(ui, ["Method", "RVA", ""]);
+            for method_id in &ty.methods {
+                let method = &metadata.methods[method_id.0];
+                let label = method_label(method, &resolver, &names);
+                if ui.selectable_label(false, label).clicked() {
+                    selected = Some(*method_id);
+                }
+                let address = project
+                    .native_methods()
+                    .and_then(|index| index.address_of(*method_id));
+                ui.monospace(address.map_or_else(
+                    || "-".to_owned(),
+                    |address| format!("0x{:08X}", address.relative_address),
+                ));
+                ui.end_row();
+            }
         });
     selected
 }
