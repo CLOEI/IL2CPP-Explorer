@@ -10,9 +10,10 @@ access, analysis, disassembly, build comparison, export, and application concern
 
 ## Status
 
-**Early stage.** The repository currently provides foundational APIs, validated metadata header
-loading, ELF64 inspection, and a basic information command. It does not yet parse IL2CPP type or
-method tables and should not be treated as a replacement for established analysis tools.
+**Early stage.** The repository currently parses version 31 metadata headers, strings, images,
+assemblies, types, fields, methods, and parameters. ELF64 inspection is available for the current
+Android/AArch64 development target. Native registration and method-address mapping are not yet
+implemented.
 
 ## Goals
 
@@ -56,6 +57,23 @@ Inspect an ELF64 binary and metadata header:
 il2cpp-explorer info libil2cpp.so global-metadata.dat
 ```
 
+Development-target and metadata inspection commands:
+
+```bash
+cargo run -p il2cpp-cli -- target
+cargo run -p il2cpp-cli -- target --verbose
+cargo run -p il2cpp-cli -- inspect-target
+cargo run -p il2cpp-cli -- binary ./libil2cpp.so
+cargo run -p il2cpp-cli -- metadata ./global-metadata.dat
+cargo run -p il2cpp-cli -- images ./global-metadata.dat
+cargo run -p il2cpp-cli -- assemblies ./global-metadata.dat
+cargo run -p il2cpp-cli -- types ./global-metadata.dat Player
+cargo run -p il2cpp-cli -- type ./global-metadata.dat MainPlayer
+```
+
+Root `libil2cpp.so` and `global-metadata.dat` files are local-only development fixtures and are
+ignored by Git.
+
 Discover available commands:
 
 ```bash
@@ -76,11 +94,11 @@ cargo build --workspace
 
 ## Roadmap
 
-- [ ] Metadata header parsing
-- [ ] Assemblies
-- [ ] Types
-- [ ] Fields
-- [ ] Methods
+- [x] Version 31 metadata header parsing
+- [x] Assemblies
+- [x] Types
+- [x] Fields
+- [x] Methods
 - [ ] Code registration discovery
 - [ ] Native method address mapping
 - [ ] Search
@@ -90,9 +108,6 @@ cargo build --workspace
 - [ ] Disassembly
 - [ ] PE support
 - [ ] Mach-O support
-
-The metadata header milestone remains open until complete supported-version headers and their table
-descriptors are parsed; only the common prefix is implemented today.
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::AssemblyId;
+use super::{AssemblyId, TypeId};
 
 /// Stable index into a project's managed image collection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -12,4 +12,5 @@ pub struct Image {
     pub id: ImageId,
     pub assembly: AssemblyId,
     pub name: String,
+    pub types: Vec<TypeId>,
 }

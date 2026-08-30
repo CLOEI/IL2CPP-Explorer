@@ -1,8 +1,9 @@
+mod commands;
+
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use il2cpp_core::analysis::Il2CppProject;
 
 #[derive(Debug, Parser)]
 #[command(name = "il2cpp-explorer")]
@@ -15,6 +16,45 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect repository-root development fixtures.
+    Target {
+        /// Print metadata table offsets and sizes.
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Print developer-oriented details for repository-root fixtures.
+    InspectTarget,
+    /// Inspect one ELF64 executable.
+    Binary { binary: PathBuf },
+    /// Inspect one global-metadata.dat file.
+    Metadata {
+        metadata: PathBuf,
+        /// Print metadata table offsets and sizes.
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Resolve one metadata string index.
+    MetadataString {
+        index: u32,
+        #[arg(default_value = "./global-metadata.dat")]
+        metadata: PathBuf,
+    },
+    /// List managed images.
+    Images { metadata: PathBuf },
+    /// List managed assemblies.
+    Assemblies { metadata: PathBuf },
+    /// Search or list managed types.
+    Types {
+        metadata: PathBuf,
+        query: Option<String>,
+        /// Print every matching type.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Inspect one exact fully qualified or unique short type name.
+    #[command(name = "type")]
+    TypeInfo { metadata: PathBuf, name: String },
+    /// Show basic executable and metadata information.
     Info { binary: PathBuf, metadata: PathBuf },
 }
 
@@ -25,30 +65,20 @@ fn main() -> Result<()> {
         .try_init()
         .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
 
-    let cli = Cli::parse();
-    match cli.command {
-        Command::Info { binary, metadata } => info(binary, metadata),
+    match Cli::parse().command {
+        Command::Target { verbose } => commands::target(verbose),
+        Command::InspectTarget => commands::inspect_target(),
+        Command::Binary { binary } => commands::binary(&binary),
+        Command::Metadata { metadata, verbose } => commands::metadata(&metadata, verbose),
+        Command::MetadataString { index, metadata } => commands::metadata_string(&metadata, index),
+        Command::Images { metadata } => commands::images(&metadata),
+        Command::Assemblies { metadata } => commands::assemblies(&metadata),
+        Command::Types {
+            metadata,
+            query,
+            all,
+        } => commands::types(&metadata, query.as_deref(), all),
+        Command::TypeInfo { metadata, name } => commands::type_info(&metadata, &name),
+        Command::Info { binary, metadata } => commands::info(&binary, &metadata),
     }
-}
-
-fn info(binary: PathBuf, metadata: PathBuf) -> Result<()> {
-    tracing::debug!(?binary, ?metadata, "loading IL2CPP project");
-    let project = Il2CppProject::load(&binary, &metadata).with_context(|| {
-        format!(
-            "failed to load binary '{}' and metadata '{}'",
-            binary.display(),
-            metadata.display()
-        )
-    })?;
-
-    println!("IL2CPP Explorer");
-    println!();
-    println!("Binary");
-    println!("  Format: {}", project.binary_format());
-    println!("  Architecture: {}", project.architecture());
-    println!();
-    println!("Metadata");
-    println!("  Version: {}", project.metadata_version());
-
-    Ok(())
 }

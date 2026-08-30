@@ -5,6 +5,12 @@ use thiserror::Error;
 pub enum Error {
     #[error("invalid IL2CPP metadata")]
     InvalidMetadata,
+    #[error("metadata read at offset {offset:#x} with length {length:#x} is out of bounds")]
+    MetadataOutOfBounds { offset: usize, length: usize },
+    #[error("invalid metadata table {0}")]
+    InvalidMetadataTable(&'static str),
+    #[error("invalid metadata string index {0}")]
+    InvalidMetadataString(u32),
     #[error("unsupported IL2CPP metadata version {0}")]
     UnsupportedMetadataVersion(u32),
     #[error("invalid or unsupported executable binary")]

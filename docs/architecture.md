@@ -31,8 +31,9 @@ models such as assemblies, types, methods, and fields rather than table offsets 
 Executable access is hidden behind `BinaryImage`. Format readers own virtual-address translation
 and byte access. ELF64 is the first target; PE and Mach-O remain separate future implementations.
 
-Metadata version dispatch lives under `metadata/versions`. Version modules will decode their own
-layouts into the shared model, avoiding version conditionals throughout analysis code.
+Metadata version dispatch lives under `metadata/versions`. Version 31 currently decodes its raw
+layouts into the shared model; unsupported versions are rejected. Future version modules must
+provide their own layouts without adding version conditionals throughout analysis code.
 
 Registration discovery implements `RegistrationResolver`. Symbol, heuristic, and manual strategies
 can evolve independently while returning the same registration model.
