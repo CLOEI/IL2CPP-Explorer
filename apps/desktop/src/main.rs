@@ -1,5 +1,8 @@
 mod actions;
 mod app;
+mod history;
+mod navigation;
+mod recent;
 mod state;
 mod theme;
 mod views;

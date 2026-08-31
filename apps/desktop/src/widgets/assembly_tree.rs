@@ -9,9 +9,33 @@ pub fn show(
     assemblies: &[AssemblyNode],
     selected_type: Option<TypeId>,
     focus: &mut Option<TypeId>,
+    filter: &str,
 ) -> Option<TypeId> {
     let mut selected = None;
     egui::ScrollArea::vertical().show(ui, |ui| {
+        let filter = filter.trim().to_lowercase();
+        if !filter.is_empty() {
+            for assembly in assemblies {
+                for type_id in &project.metadata().images
+                    [project.metadata().assemblies[assembly.id.0].image.0]
+                    .types
+                {
+                    let ty = &project.metadata().types[type_id.0];
+                    let full = format!("{}.{}", ty.namespace, ty.name).to_lowercase();
+                    if full.contains(&filter)
+                        && ui
+                            .selectable_label(
+                                selected_type == Some(*type_id),
+                                format!("{}: {}", assembly.name, full),
+                            )
+                            .clicked()
+                    {
+                        selected = Some(*type_id);
+                    }
+                }
+            }
+            return;
+        }
         for assembly in assemblies {
             let focused = focus.is_some_and(|type_id| contains(&assembly.namespaces, type_id));
             let id = ui.make_persistent_id(("assembly", assembly.id.0));

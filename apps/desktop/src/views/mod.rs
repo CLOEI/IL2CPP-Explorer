@@ -1,3 +1,4 @@
+pub mod address_view;
 pub mod explorer;
 pub mod method_view;
 pub mod project_summary;

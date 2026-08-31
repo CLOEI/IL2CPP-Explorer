@@ -8,6 +8,7 @@ pub fn show(
     ui: &mut egui::Ui,
     data: &ProjectData,
     type_id: TypeId,
+    member_filter: &mut String,
 ) -> Option<il2cpp_core::model::MethodId> {
     let project = &data.project;
     let metadata = project.metadata();
@@ -27,14 +28,28 @@ pub fn show(
     ui.add_space(10.0);
 
     section(ui, "Fields");
+    ui.text_edit_singleline(member_filter);
     egui::Grid::new(("fields", type_id.0))
         .striped(true)
         .show(ui, |ui| {
             header(ui, ["Name", "Type", "Offset"]);
             for field_id in &ty.fields {
                 let field = &metadata.fields[field_id.0];
+                if !member_filter.is_empty()
+                    && !field
+                        .name
+                        .to_lowercase()
+                        .contains(&member_filter.to_lowercase())
+                {
+                    continue;
+                }
                 let signature = resolver.field_signature(field).ok();
-                ui.monospace(&field.name);
+                ui.monospace(&field.name).context_menu(|ui| {
+                    if ui.button("Copy Name").clicked() {
+                        ui.ctx().copy_text(field.name.clone());
+                        ui.close_menu();
+                    }
+                });
                 ui.monospace(
                     signature
                         .as_ref()
@@ -80,8 +95,23 @@ pub fn show(
             header(ui, ["Method", "RVA", ""]);
             for method_id in &ty.methods {
                 let method = &metadata.methods[method_id.0];
+                if !member_filter.is_empty()
+                    && !method
+                        .name
+                        .to_lowercase()
+                        .contains(&member_filter.to_lowercase())
+                {
+                    continue;
+                }
                 let label = method_label(method, &resolver, &names);
-                if ui.selectable_label(false, label).clicked() {
+                let response = ui.selectable_label(false, label);
+                response.context_menu(|ui| {
+                    if ui.button("Copy Name").clicked() {
+                        ui.ctx().copy_text(method.name.clone());
+                        ui.close_menu();
+                    }
+                });
+                if response.clicked() {
                     selected = Some(*method_id);
                 }
                 let address = project

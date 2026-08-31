@@ -1,10 +1,12 @@
-use std::path::Path;
+use crate::recent::RecentProject;
+use std::path::{Path, PathBuf};
 
 pub enum WelcomeAction {
     SelectBinary,
     SelectMetadata,
     Analyze,
     OpenLocal,
+    Recent(PathBuf, PathBuf),
 }
 
 pub fn show(
@@ -12,6 +14,7 @@ pub fn show(
     binary: Option<&Path>,
     metadata: Option<&Path>,
     local_target: bool,
+    recent: &[RecentProject],
 ) -> Option<WelcomeAction> {
     let mut action = None;
     egui::CentralPanel::default().show(context, |ui| {
@@ -52,6 +55,28 @@ pub fn show(
             }
             if local_target && ui.button("Open Local Target").clicked() {
                 action = Some(WelcomeAction::OpenLocal);
+            }
+            if !recent.is_empty() {
+                ui.add_space(20.0);
+                ui.strong("Recent Projects");
+                for project in recent {
+                    let available = project.binary.is_file() && project.metadata.is_file();
+                    if ui
+                        .add_enabled(
+                            available,
+                            egui::Button::new(project.metadata.to_string_lossy()),
+                        )
+                        .clicked()
+                    {
+                        action = Some(WelcomeAction::Recent(
+                            project.binary.clone(),
+                            project.metadata.clone(),
+                        ));
+                    }
+                    if !available {
+                        ui.weak(format!("Unavailable: {}", project.metadata.display()));
+                    }
+                }
             }
         });
     });

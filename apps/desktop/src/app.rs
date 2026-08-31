@@ -8,6 +8,9 @@ use il2cpp_diff::{DiffEngine, DiffOptions, DiffStatus, ProjectDiff};
 use il2cpp_export::{DumpCsExporter, DumpCsOptions, ExportContext, Exporter};
 
 use crate::actions::{self, TargetFile};
+use crate::history::NavigationHistory;
+use crate::navigation::{AddressTarget, NavigationTarget, TabState, parse_address};
+use crate::recent::RecentProjects;
 use crate::state::{LoadState, MethodTab, ProjectData, SearchMatch, SearchResult, search};
 use crate::views::explorer::{self, ExplorerAction};
 use crate::views::welcome::{self, WelcomeAction};
@@ -24,6 +27,17 @@ pub struct Il2CppExplorerApp {
     search_limited: bool,
     active_method_tab: MethodTab,
     export_status: Option<String>,
+    history: NavigationHistory,
+    tabs: TabState,
+    selected_address: Option<AddressTarget>,
+    address_input: String,
+    address_error: Option<String>,
+    show_go_to: bool,
+    address_kind: AddressKind,
+    recent: RecentProjects,
+    tree_filter: String,
+    member_filter: String,
+    pending_restore: Option<StableTarget>,
     mode: MainMode,
     compare: CompareState,
 }
@@ -32,6 +46,24 @@ pub struct Il2CppExplorerApp {
 enum MainMode {
     Explorer,
     Compare,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AddressKind {
+    Rva,
+    Va,
+    FileOffset,
+}
+enum StableTarget {
+    Type {
+        namespace: String,
+        name: String,
+    },
+    Method {
+        namespace: String,
+        type_name: String,
+        name: String,
+        parameters: usize,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -87,6 +119,17 @@ impl Default for Il2CppExplorerApp {
             search_limited: false,
             active_method_tab: MethodTab::Overview,
             export_status: None,
+            history: NavigationHistory::default(),
+            tabs: TabState::default(),
+            selected_address: None,
+            address_input: String::new(),
+            address_error: None,
+            show_go_to: false,
+            address_kind: AddressKind::Rva,
+            recent: RecentProjects::load(),
+            tree_filter: String::new(),
+            member_filter: String::new(),
+            pending_restore: None,
             mode: MainMode::Explorer,
             compare: CompareState::default(),
         }
@@ -94,7 +137,99 @@ impl Default for Il2CppExplorerApp {
 }
 
 impl Il2CppExplorerApp {
+    fn navigate_to(&mut self, target: NavigationTarget) {
+        if self.history.navigate(target) {
+            self.apply_navigation(target);
+        }
+    }
+    fn apply_navigation(&mut self, target: NavigationTarget) {
+        let title = self.navigation_title(target);
+        self.tabs.replace_active(target, title);
+        self.apply_selection(target);
+    }
+    fn apply_selection(&mut self, target: NavigationTarget) {
+        self.selected_address = None;
+        match target {
+            NavigationTarget::ProjectOverview | NavigationTarget::Assembly(_) => {
+                self.selected_type = None;
+                self.selected_method = None;
+                self.tree_focus = None;
+            }
+            NavigationTarget::Type(id) => {
+                self.selected_type = Some(id);
+                self.selected_method = None;
+                self.tree_focus = Some(id);
+            }
+            NavigationTarget::Method(id) => {
+                if let LoadState::Loaded(data) = &self.load_state {
+                    if let Some(method) = data.project.metadata().methods.get(id.0) {
+                        self.selected_type = Some(method.declaring_type);
+                        self.selected_method = Some(id);
+                        self.tree_focus = self.selected_type;
+                    }
+                }
+            }
+            NavigationTarget::Field(id) => {
+                if let LoadState::Loaded(data) = &self.load_state {
+                    if let Some(field) = data.project.metadata().fields.get(id.0) {
+                        self.selected_type = Some(field.declaring_type);
+                        self.selected_method = None;
+                        self.tree_focus = self.selected_type;
+                    }
+                }
+            }
+            NavigationTarget::Property(id) => {
+                if let LoadState::Loaded(data) = &self.load_state {
+                    if let Some(property) = data.project.metadata().properties.get(id.0) {
+                        self.selected_type = Some(property.declaring_type);
+                        self.selected_method = None;
+                        self.tree_focus = self.selected_type;
+                    }
+                }
+            }
+            NavigationTarget::Address(address) => {
+                self.selected_type = None;
+                self.selected_method = None;
+                self.tree_focus = None;
+                self.selected_address = Some(address);
+            }
+        }
+    }
+    fn navigation_title(&self, target: NavigationTarget) -> String {
+        match target {
+            NavigationTarget::ProjectOverview => "Project".into(),
+            NavigationTarget::Assembly(id) => self
+                .loaded()
+                .and_then(|data| data.project.metadata().assemblies.get(id.0))
+                .map_or_else(|| "Assembly".into(), |item| item.name.clone()),
+            NavigationTarget::Type(id) => self.loaded().map_or_else(
+                || "Type".into(),
+                |data| crate::state::type_name(&data.project, id),
+            ),
+            NavigationTarget::Method(id) => self
+                .loaded()
+                .and_then(|data| data.project.metadata().methods.get(id.0))
+                .map_or_else(|| "Method".into(), |item| item.name.clone()),
+            NavigationTarget::Field(id) => self
+                .loaded()
+                .and_then(|data| data.project.metadata().fields.get(id.0))
+                .map_or_else(|| "Field".into(), |item| item.name.clone()),
+            NavigationTarget::Property(id) => self
+                .loaded()
+                .and_then(|data| data.project.metadata().properties.get(id.0))
+                .map_or_else(|| "Property".into(), |item| item.name.clone()),
+            NavigationTarget::Address(value) => format!("{value:?}"),
+        }
+    }
+    fn loaded(&self) -> Option<&ProjectData> {
+        if let LoadState::Loaded(data) = &self.load_state {
+            Some(data)
+        } else {
+            None
+        }
+    }
     fn start_load(&mut self, binary: PathBuf, metadata: PathBuf) {
+        self.pending_restore = self.stable_target();
         self.selected_type = None;
         self.selected_method = None;
         self.tree_focus = None;
@@ -128,6 +263,8 @@ impl Il2CppExplorerApp {
             _ => None,
         };
         if let Some((result, binary, metadata)) = completed {
+            let loaded = result.is_ok();
+            let recent_paths = (binary.clone(), metadata.clone());
             self.load_state = match result {
                 Ok(data) => {
                     self.binary_path = Some(data.binary_path.clone());
@@ -140,6 +277,17 @@ impl Il2CppExplorerApp {
                     metadata,
                 },
             };
+            if loaded {
+                self.recent.remember(recent_paths.0, recent_paths.1);
+                self.history = NavigationHistory::default();
+                self.tabs = TabState::default();
+                let target = self
+                    .pending_restore
+                    .take()
+                    .and_then(|target| self.restore_target(target))
+                    .unwrap_or(NavigationTarget::ProjectOverview);
+                self.navigate_to(target);
+            }
         }
     }
 
@@ -147,41 +295,101 @@ impl Il2CppExplorerApp {
         let LoadState::Loaded(data) = &self.load_state else {
             return;
         };
+        if let Some(value) = self.search_query.strip_prefix("addr:") {
+            if let Ok(address) = parse_address(value) {
+                self.search_results = vec![SearchMatch {
+                    result: SearchResult::Address(address),
+                    label: format!("RVA 0x{address:08X}"),
+                    kind: "Address",
+                    searchable: String::new(),
+                }];
+                self.search_limited = false;
+                return;
+            }
+        }
+        let (results, limited) = search(&data.search_entries, &self.search_query);
+        self.search_results = results;
+        self.search_limited = limited;
+        if let Some(value) = self.search_query.strip_prefix("addr:") {
+            if let Ok(address) = parse_address(value) {
+                self.search_results = vec![SearchMatch {
+                    result: SearchResult::Address(address),
+                    label: format!("RVA 0x{address:08X}"),
+                    kind: "Address",
+                    searchable: String::new(),
+                }];
+                self.search_limited = false;
+                return;
+            }
+        }
         let (results, limited) = search(&data.search_entries, &self.search_query);
         self.search_results = results;
         self.search_limited = limited;
     }
 
     fn select(&mut self, result: SearchResult) {
-        match result {
-            SearchResult::Type(type_id) => {
-                self.selected_type = Some(type_id);
-                self.selected_method = None;
-                self.tree_focus = Some(type_id);
-            }
-            SearchResult::Method(method_id) => {
-                let data = match &self.load_state {
-                    LoadState::Loaded(data) => data,
-                    _ => return,
-                };
-                self.selected_type =
-                    Some(data.project.metadata().methods[method_id.0].declaring_type);
-                self.selected_method = Some(method_id);
-                self.tree_focus = self.selected_type;
-            }
-            SearchResult::Field(field_id) => {
-                let data = match &self.load_state {
-                    LoadState::Loaded(data) => data,
-                    _ => return,
-                };
-                self.selected_type =
-                    Some(data.project.metadata().fields[field_id.0].declaring_type);
-                self.selected_method = None;
-                self.tree_focus = self.selected_type;
-            }
-        }
+        let target = match result {
+            SearchResult::Address(value) => NavigationTarget::Address(AddressTarget::Rva(value)),
+            SearchResult::Assembly(id) => NavigationTarget::Assembly(id),
+            SearchResult::Type(id) => NavigationTarget::Type(id),
+            SearchResult::Method(id) => NavigationTarget::Method(id),
+            SearchResult::Field(id) => NavigationTarget::Field(id),
+        };
+        self.navigate_to(target);
         self.search_query.clear();
         self.search_results.clear();
+    }
+
+    fn stable_target(&self) -> Option<StableTarget> {
+        let data = self.loaded()?;
+        if let Some(method) = self
+            .selected_method
+            .and_then(|id| data.project.metadata().methods.get(id.0))
+        {
+            let ty = &data.project.metadata().types[method.declaring_type.0];
+            return Some(StableTarget::Method {
+                namespace: ty.namespace.clone(),
+                type_name: ty.name.clone(),
+                name: method.name.clone(),
+                parameters: method.parameters.len(),
+            });
+        }
+        self.selected_type
+            .and_then(|id| data.project.metadata().types.get(id.0))
+            .map(|ty| StableTarget::Type {
+                namespace: ty.namespace.clone(),
+                name: ty.name.clone(),
+            })
+    }
+    fn restore_target(&self, target: StableTarget) -> Option<NavigationTarget> {
+        let data = self.loaded()?;
+        match target {
+            StableTarget::Type { namespace, name } => data
+                .project
+                .metadata()
+                .types
+                .iter()
+                .find(|ty| ty.namespace == namespace && ty.name == name)
+                .map(|ty| NavigationTarget::Type(ty.id)),
+            StableTarget::Method {
+                namespace,
+                type_name,
+                name,
+                parameters,
+            } => data
+                .project
+                .metadata()
+                .methods
+                .iter()
+                .find(|method| {
+                    let ty = &data.project.metadata().types[method.declaring_type.0];
+                    ty.namespace == namespace
+                        && ty.name == type_name
+                        && method.name == name
+                        && method.parameters.len() == parameters
+                })
+                .map(|method| NavigationTarget::Method(method.id)),
+        }
     }
 
     fn handle_drops(&mut self, context: &egui::Context) {
@@ -289,6 +497,48 @@ impl Il2CppExplorerApp {
             }
         }
     }
+
+    fn show_go_to_address(&mut self, context: &egui::Context) {
+        if !self.show_go_to {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("Go to Address")
+            .open(&mut open)
+            .collapsible(false)
+            .show(context, |ui| {
+                ui.label("Address");
+                ui.text_edit_singleline(&mut self.address_input);
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut self.address_kind, AddressKind::Rva, "RVA");
+                    ui.radio_value(&mut self.address_kind, AddressKind::Va, "VA");
+                    ui.radio_value(
+                        &mut self.address_kind,
+                        AddressKind::FileOffset,
+                        "File Offset",
+                    );
+                });
+                if let Some(error) = &self.address_error {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                }
+                if ui.button("Go").clicked() {
+                    match parse_address(&self.address_input) {
+                        Ok(value) => {
+                            let address = match self.address_kind {
+                                AddressKind::Rva => AddressTarget::Rva(value),
+                                AddressKind::Va => AddressTarget::Va(value),
+                                AddressKind::FileOffset => AddressTarget::FileOffset(value),
+                            };
+                            self.navigate_to(NavigationTarget::Address(address));
+                            self.show_go_to = false;
+                            self.address_error = None;
+                        }
+                        Err(error) => self.address_error = Some(error.to_owned()),
+                    }
+                }
+            });
+        self.show_go_to = open;
+    }
 }
 
 fn load_project(binary: &Path, metadata: &Path) -> Result<Arc<Il2CppProject>, String> {
@@ -322,10 +572,42 @@ impl eframe::App for Il2CppExplorerApp {
         if context.input(|input| input.modifiers.command && input.key_pressed(egui::Key::F)) {
             context.memory_mut(|memory| memory.request_focus(egui::Id::new("global_search")));
         }
+        if context.input(|input| input.modifiers.command && input.key_pressed(egui::Key::G)) {
+            self.show_go_to = true;
+            self.address_error = None;
+        }
+        if context.input(|input| input.modifiers.alt && input.key_pressed(egui::Key::ArrowLeft)) {
+            if let Some(target) = self.history.back() {
+                self.apply_navigation(target);
+            }
+        }
+        if context.input(|input| input.modifiers.alt && input.key_pressed(egui::Key::ArrowRight)) {
+            if let Some(target) = self.history.forward() {
+                self.apply_navigation(target);
+            }
+        }
+        if context.input(|input| input.modifiers.command && input.key_pressed(egui::Key::W)) {
+            if let Some(index) = self.tabs.active {
+                self.tabs.close(index);
+                if let Some(tab) = self.tabs.active.and_then(|index| self.tabs.tabs.get(index)) {
+                    self.apply_selection(tab.target);
+                } else {
+                    self.navigate_to(NavigationTarget::ProjectOverview);
+                }
+            }
+        }
+        if context.input(|input| input.modifiers.command && input.key_pressed(egui::Key::R)) {
+            if let (Some(binary), Some(metadata)) =
+                (self.binary_path.clone(), self.metadata_path.clone())
+            {
+                self.start_load(binary, metadata);
+            }
+        }
         if context.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.search_query.clear();
             self.search_results.clear();
         }
+        self.show_go_to_address(context);
         if let LoadState::Failed {
             message,
             binary,
@@ -343,6 +625,45 @@ impl eframe::App for Il2CppExplorerApp {
             }
             return;
         }
+        if self.loaded().is_some() {
+            let mut activate_tab = None;
+            egui::TopBottomPanel::top("explorer_tabs").show(context, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(self.history.can_back(), egui::Button::new("←"))
+                        .on_hover_text("Back (Alt+Left)")
+                        .clicked()
+                    {
+                        activate_tab = self
+                            .history
+                            .back()
+                            .map(|target| (self.tabs.active.unwrap_or(0), target));
+                    }
+                    if ui
+                        .add_enabled(self.history.can_forward(), egui::Button::new("→"))
+                        .on_hover_text("Forward (Alt+Right)")
+                        .clicked()
+                    {
+                        activate_tab = self
+                            .history
+                            .forward()
+                            .map(|target| (self.tabs.active.unwrap_or(0), target));
+                    }
+                    for (index, tab) in self.tabs.tabs.iter().enumerate() {
+                        if ui
+                            .selectable_label(self.tabs.active == Some(index), &tab.title)
+                            .clicked()
+                        {
+                            activate_tab = Some((index, tab.target));
+                        }
+                    }
+                });
+            });
+            if let Some((index, target)) = activate_tab {
+                self.tabs.active = Some(index);
+                self.apply_selection(target);
+            }
+        }
         match &mut self.load_state {
             LoadState::Empty => {
                 context
@@ -353,6 +674,7 @@ impl eframe::App for Il2CppExplorerApp {
                     self.metadata_path.as_deref(),
                     Path::new("libil2cpp.so").is_file()
                         && Path::new("global-metadata.dat").is_file(),
+                    &self.recent.projects,
                 ) {
                     match action {
                         WelcomeAction::SelectBinary => self.binary_path = actions::select_binary(),
@@ -370,6 +692,9 @@ impl eframe::App for Il2CppExplorerApp {
                             PathBuf::from("libil2cpp.so"),
                             PathBuf::from("global-metadata.dat"),
                         ),
+                        WelcomeAction::Recent(binary, metadata) => {
+                            self.start_load(binary, metadata)
+                        }
                     }
                 }
             }
@@ -401,6 +726,9 @@ impl eframe::App for Il2CppExplorerApp {
                         tab: &mut self.active_method_tab,
                         tree_focus: &mut self.tree_focus,
                         export_status: self.export_status.as_deref(),
+                        address: self.selected_address,
+                        tree_filter: &mut self.tree_filter,
+                        member_filter: &mut self.member_filter,
                     },
                 ) {
                     match action {

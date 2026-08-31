@@ -2,8 +2,10 @@ use il2cpp_core::model::MethodId;
 use il2cpp_disasm::{Arm64Disassembler, FunctionInspector};
 use il2cpp_export::{ExportContext, render_method, render_type};
 
+use crate::navigation::AddressTarget;
 use crate::state::{MethodTab, ProjectData, format_hex, format_token, type_name};
 use crate::views::type_view::{method_label, resolver};
+use crate::widgets::address;
 use crate::widgets::code_view;
 
 pub fn show(
@@ -66,21 +68,27 @@ fn overview(
             row(ui, "Method", &method.name);
             row(ui, "Token", &format_token(method.token));
             row(ui, "Method ID", &method.id.0.to_string());
-            row(
+            ui.strong("RVA");
+            let _ = address::show(
                 ui,
-                "RVA",
-                &format_hex(address.map(|address| address.relative_address)),
+                address.map(|address| address.relative_address),
+                AddressTarget::Rva(address.map_or(0, |address| address.relative_address)),
             );
-            row(
+            ui.end_row();
+            ui.strong("VA");
+            let _ = address::show(
                 ui,
-                "VA",
-                &format_hex(address.map(|address| address.virtual_address)),
+                address.map(|address| address.virtual_address),
+                AddressTarget::Va(address.map_or(0, |address| address.virtual_address)),
             );
-            row(
+            ui.end_row();
+            ui.strong("File offset");
+            let _ = address::show(
                 ui,
-                "File offset",
-                &format_hex(address.map(|address| address.file_offset)),
+                address.map(|address| address.file_offset),
+                AddressTarget::FileOffset(address.map_or(0, |address| address.file_offset)),
             );
+            ui.end_row();
         });
 }
 
@@ -198,6 +206,11 @@ pub fn type_csharp(ui: &mut egui::Ui, data: &mut ProjectData, type_id: il2cpp_co
 
 fn row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.strong(label);
-    ui.monospace(value);
+    ui.monospace(value).context_menu(|ui| {
+        if ui.button("Copy").clicked() {
+            ui.ctx().copy_text(value.to_owned());
+            ui.close_menu();
+        }
+    });
     ui.end_row();
 }

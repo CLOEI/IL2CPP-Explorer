@@ -138,6 +138,24 @@ Use **Compare Builds** navigation to select old/new binary and metadata pairs. C
 a worker thread, then exposes cached changed-type search, status filters, side-by-side base-type
 and field offsets, and method RVA/native-body similarity details.
 
+### Navigation
+
+Desktop explorer has browser-style history, lightweight document tabs, cached global search, and
+recent binary/metadata pairs. Recent entries store paths only as JSON in platform config storage.
+
+| Action | Shortcut |
+| --- | --- |
+| Open Project | Ctrl/Cmd+O |
+| Search | Ctrl/Cmd+F |
+| Go to Address | Ctrl/Cmd+G |
+| Reload Project | Ctrl/Cmd+R |
+| Back | Alt+Left |
+| Forward | Alt+Right |
+| Close Tab | Ctrl/Cmd+W |
+
+Search supports `type:`, `method:`, `field:`, `namespace:`, `assembly:`, and `addr:0x...`.
+Address navigation accepts RVA, VA, and file offsets through shared binary/disassembly APIs.
+
 ## Development
 
 Rust 1.85 or newer is required.

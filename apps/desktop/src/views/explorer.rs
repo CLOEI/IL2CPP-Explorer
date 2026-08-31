@@ -1,5 +1,6 @@
+use crate::navigation::AddressTarget;
 use crate::state::{MethodTab, ProjectData, SearchMatch, SearchResult};
-use crate::views::{method_view, project_summary, type_view};
+use crate::views::{address_view, method_view, project_summary, type_view};
 use crate::widgets::{assembly_tree, search};
 
 pub enum ExplorerAction {
@@ -17,6 +18,9 @@ pub struct ExplorerState<'a> {
     pub tab: &'a mut MethodTab,
     pub tree_focus: &'a mut Option<il2cpp_core::model::TypeId>,
     pub export_status: Option<&'a str>,
+    pub address: Option<AddressTarget>,
+    pub tree_filter: &'a mut String,
+    pub member_filter: &'a mut String,
 }
 
 pub fn show(
@@ -33,6 +37,9 @@ pub fn show(
         tab,
         tree_focus,
         export_status,
+        address,
+        tree_filter,
+        member_filter,
     } = state;
     let mut action = None;
     egui::TopBottomPanel::top("toolbar").show(context, |ui| {
@@ -83,6 +90,7 @@ pub fn show(
         .default_width(280.0)
         .show(context, |ui| {
             ui.strong("Assemblies / Types");
+            ui.text_edit_singleline(tree_filter);
             ui.separator();
             if let Some(type_id) = assembly_tree::show(
                 ui,
@@ -90,6 +98,7 @@ pub fn show(
                 &data.navigation.assemblies,
                 *selected_type,
                 tree_focus,
+                tree_filter,
             ) {
                 action = Some(ExplorerAction::Select(SearchResult::Type(type_id)));
             }
@@ -98,14 +107,18 @@ pub fn show(
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                if let Some(method_id) = *selected_method {
+                if let Some(address) = address {
+                    address_view::show(ui, data, address);
+                } else if let Some(method_id) = *selected_method {
                     method_view::show(ui, data, method_id, tab);
                     if ui.button("Back to type").clicked() {
-                        *selected_method = None;
+                        action = Some(ExplorerAction::Select(SearchResult::Type(
+                            data.project.metadata().methods[method_id.0].declaring_type,
+                        )));
                     }
                 } else if let Some(type_id) = *selected_type {
-                    if let Some(method_id) = type_view::show(ui, data, type_id) {
-                        *selected_method = Some(method_id);
+                    if let Some(method_id) = type_view::show(ui, data, type_id, member_filter) {
+                        action = Some(ExplorerAction::Select(SearchResult::Method(method_id)));
                     }
                     ui.add_space(12.0);
                     egui::CollapsingHeader::new("C# representation").show(ui, |ui| {
