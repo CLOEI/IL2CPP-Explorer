@@ -8,3 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+il2cpp-core = { path = "../il2cpp-core" }
+il2cpp-disasm = { path = "../il2cpp-disasm" }
+serde.workspace = true

@@ -13,4 +13,5 @@ egui.workspace = true
 rfd.workspace = true
 il2cpp-core = { path = "../../crates/il2cpp-core" }
 il2cpp-disasm = { path = "../../crates/il2cpp-disasm" }
+il2cpp-diff = { path = "../../crates/il2cpp-diff" }
 il2cpp-export = { path = "../../crates/il2cpp-export" }

@@ -134,6 +134,35 @@ enum Command {
         #[arg(long, default_value_t = 256)]
         bytes: usize,
     },
+    /// Compare two IL2CPP builds using managed identities, then native bodies when available.
+    Diff {
+        #[arg(long)]
+        old_binary: Option<PathBuf>,
+        #[arg(long)]
+        old_metadata: PathBuf,
+        #[arg(long)]
+        new_binary: Option<PathBuf>,
+        #[arg(long)]
+        new_metadata: PathBuf,
+        #[arg(long)]
+        assembly: Option<String>,
+        #[arg(long, visible_alias = "type")]
+        type_filter: Option<String>,
+        #[arg(long, visible_alias = "method")]
+        method_filter: Option<String>,
+        /// Include unchanged entities. Changed-only is default.
+        #[arg(long)]
+        all: bool,
+        /// Disable ARM64 native-body fingerprints.
+        #[arg(long)]
+        metadata_only: bool,
+        /// Emit stable public diff DTO JSON.
+        #[arg(long)]
+        json: bool,
+        /// Write JSON report to this path. Implies --json.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Generate a C#-style metadata dump.
     Dump {
         /// Binary path, or metadata path in metadata-only mode.
@@ -244,6 +273,33 @@ fn main() -> Result<()> {
             method_id,
             bytes,
         } => commands::calls(&binary, &metadata, query.as_deref(), method_id, bytes),
+        Command::Diff {
+            old_binary,
+            old_metadata,
+            new_binary,
+            new_metadata,
+            assembly,
+            type_filter,
+            method_filter,
+            all,
+            metadata_only,
+            json,
+            output,
+        } => commands::diff(
+            old_binary.as_deref(),
+            &old_metadata,
+            new_binary.as_deref(),
+            &new_metadata,
+            commands::DiffFlags {
+                assembly: assembly.as_deref(),
+                type_filter: type_filter.as_deref(),
+                method_filter: method_filter.as_deref(),
+                all,
+                metadata_only,
+                json: json || output.is_some(),
+                output: output.as_deref(),
+            },
+        ),
         Command::Dump {
             input,
             metadata,

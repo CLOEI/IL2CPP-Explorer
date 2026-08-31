@@ -7,6 +7,7 @@ use il2cpp_core::binary::{Architecture, BinaryImage, ElfImage, Endianness};
 use il2cpp_core::metadata::{Metadata, MetadataHeader};
 use il2cpp_core::model::Method;
 use il2cpp_core::registration::{MethodAddress, NativeMethodIndex, RegistrationInfo};
+use il2cpp_diff::{DiffEngine, DiffOptions, DiffStatus, ProjectDiff};
 use il2cpp_disasm::{
     Arm64Disassembler, ControlFlow, FunctionInspection, FunctionInspector, FunctionRangeSource,
     Instruction, disassemble_executable_window,
@@ -26,6 +27,162 @@ pub(crate) struct DumpFlags {
     pub no_field_offsets: bool,
     pub fully_qualified_types: bool,
     pub verbose: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DiffFlags<'a> {
+    pub assembly: Option<&'a str>,
+    pub type_filter: Option<&'a str>,
+    pub method_filter: Option<&'a str>,
+    pub all: bool,
+    pub metadata_only: bool,
+    pub json: bool,
+    pub output: Option<&'a Path>,
+}
+
+pub(crate) fn diff(
+    old_binary: Option<&Path>,
+    old_metadata: &Path,
+    new_binary: Option<&Path>,
+    new_metadata: &Path,
+    flags: DiffFlags<'_>,
+) -> Result<()> {
+    let mut old =
+        load_diff_project(old_binary, old_metadata).context("failed to load old build")?;
+    let mut new =
+        load_diff_project(new_binary, new_metadata).context("failed to load new build")?;
+    if !flags.metadata_only {
+        let _ = old.prepare_analysis();
+        let _ = new.prepare_analysis();
+    }
+    let report = DiffEngine::new(&old, &new)
+        .with_options(DiffOptions {
+            compare_native_bodies: !flags.metadata_only,
+            calculate_similarity: true,
+        })
+        .compare()?;
+    if flags.json {
+        let bytes = serde_json::to_vec_pretty(&report)?;
+        if let Some(path) = flags.output {
+            std::fs::write(path, bytes)
+                .with_context(|| format!("failed to write '{}'", path.display()))?;
+        } else {
+            println!("{}", String::from_utf8(bytes)?);
+        }
+    } else {
+        print_diff(&report, flags);
+    }
+    Ok(())
+}
+
+fn load_diff_project(binary: Option<&Path>, metadata: &Path) -> Result<Il2CppProject> {
+    Ok(binary.map_or_else(
+        || Il2CppProject::load_metadata_only(metadata),
+        |binary| Il2CppProject::load(binary, metadata),
+    )?)
+}
+
+fn print_diff(report: &ProjectDiff, flags: DiffFlags<'_>) {
+    println!("IL2CPP Build Diff\n");
+    println!("Summary\n");
+    println!(
+        "Assemblies\n  Added:   {}\n  Removed: {}",
+        report.summary.assemblies_added, report.summary.assemblies_removed
+    );
+    println!(
+        "\nTypes\n  Added:   {}\n  Removed: {}\n  Changed: {}",
+        report.summary.types_added, report.summary.types_removed, report.summary.types_changed
+    );
+    println!(
+        "\nMethods\n  Added:   {}\n  Removed: {}\n  Changed: {}\n  Moved:   {}",
+        report.summary.methods_added,
+        report.summary.methods_removed,
+        report.summary.methods_changed,
+        report.summary.methods_moved
+    );
+    if !report.native_available {
+        println!("\nNative comparison unavailable. Metadata diff completed.");
+    }
+    for ty in report
+        .types
+        .iter()
+        .filter(|ty| matches_filter(ty, flags))
+        .filter(|ty| {
+            flags.all
+                || ty.status.is_changed()
+                || ty.fields.iter().any(|item| item.status.is_changed())
+                || ty.properties.iter().any(|item| item.status.is_changed())
+                || ty.methods.iter().any(|item| item.status.is_changed())
+        })
+    {
+        println!("\n{} {}", ty.status.marker(), ty.identity);
+        for field in ty
+            .fields
+            .iter()
+            .filter(|item| flags.all || item.status.is_changed())
+        {
+            println!(
+                "  {} field {}{}",
+                field.status.marker(),
+                field.name,
+                offsets(field.old_offset, field.new_offset)
+            );
+        }
+        for property in ty
+            .properties
+            .iter()
+            .filter(|item| flags.all || item.status.is_changed())
+        {
+            println!("  {} property {}", property.status.marker(), property.name);
+        }
+        for method in ty
+            .methods
+            .iter()
+            .filter(|item| flags.all || item.status.is_changed())
+            .filter(|item| {
+                flags
+                    .method_filter
+                    .is_none_or(|filter| item.identity.name.contains(filter))
+            })
+        {
+            println!(
+                "  {} {}{}",
+                method.status.marker(),
+                method.identity,
+                addresses(method.old_rva, method.new_rva)
+            );
+            if let Some(native) = &method.native {
+                if method.status == DiffStatus::Moved {
+                    println!("      Native body: equivalent");
+                } else if let Some(score) = native.similarity {
+                    println!("      Native similarity: {:.1}%", score * 100.0);
+                }
+            }
+        }
+    }
+}
+
+fn matches_filter(ty: &il2cpp_diff::TypeDiff, flags: DiffFlags<'_>) -> bool {
+    flags
+        .assembly
+        .is_none_or(|filter| ty.identity.assembly.contains(filter))
+        && flags
+            .type_filter
+            .is_none_or(|filter| ty.identity.to_string().contains(filter))
+}
+fn offsets(old: Option<i32>, new: Option<i32>) -> String {
+    match (old, new) {
+        (Some(old), Some(new)) if old != new => format!(" offset {old:#x} -> {new:#x}"),
+        _ => String::new(),
+    }
+}
+fn addresses(old: Option<u64>, new: Option<u64>) -> String {
+    match (old, new) {
+        (Some(old), Some(new)) => format!(" RVA {old:#x} -> {new:#x}"),
+        (Some(old), None) => format!(" RVA {old:#x}"),
+        (None, Some(new)) => format!(" RVA {new:#x}"),
+        (None, None) => String::new(),
+    }
 }
 
 pub(crate) fn target(verbose: bool) -> Result<()> {

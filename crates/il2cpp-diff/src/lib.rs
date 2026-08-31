@@ -1,19 +1,17 @@
-//! Data types for describing changes between normalized IL2CPP builds.
-//!
-//! Matching and comparison algorithms are intentionally not implemented yet.
+//! Deterministic, managed-identity-first IL2CPP build comparison.
 
-/// Kind of change detected between two builds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ChangeKind {
-    Added,
-    Removed,
-    Changed,
-    Moved,
-}
+mod diff;
+mod identity;
+mod native;
+mod report;
+mod status;
 
-/// A change and the normalized item it concerns.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Change<T> {
-    pub kind: ChangeKind,
-    pub item: T,
-}
+pub use diff::{DiffEngine, DiffOptions};
+pub use identity::{MethodIdentity, MethodMatchKey, TypeIdentity, TypeIdentityRef};
+pub use native::{
+    FunctionFingerprint, NativeDiff, NativeInstruction, NormalizedInstruction, NormalizedOperand,
+};
+pub use report::{
+    AssemblyDiff, DiffSummary, FieldDiff, MethodDiff, ProjectDiff, PropertyDiff, TypeDiff,
+};
+pub use status::DiffStatus;

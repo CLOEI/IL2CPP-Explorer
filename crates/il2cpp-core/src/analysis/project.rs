@@ -1,7 +1,11 @@
 use std::path::Path;
 
+use crate::Error;
 use crate::Result;
-use crate::binary::{Architecture, BinaryFormat, BinaryImage, ElfImage};
+use crate::binary::{
+    Architecture, BinaryFormat, BinaryImage, BinaryKind, ElfImage, Endianness, RelativeRelocation,
+    SectionInfo, SegmentInfo,
+};
 use crate::metadata::{Metadata, MetadataVersion};
 use crate::registration::{NativeMethodIndex, Registration, RegistrationInfo, RuntimeMetadata};
 
@@ -26,6 +30,20 @@ impl Il2CppProject {
             binary: Box::new(binary),
             binary_format: BinaryFormat::Elf64,
             metadata,
+            registration: None,
+            registration_info: None,
+            runtime_metadata: None,
+            native_methods: None,
+        })
+    }
+
+    /// Loads metadata without an executable. Metadata comparison/export remains available;
+    /// registration, addresses, and native inspection are intentionally unavailable.
+    pub fn load_metadata_only(metadata_path: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self {
+            binary: Box::new(MetadataOnlyBinary),
+            binary_format: BinaryFormat::Elf64,
+            metadata: Metadata::open(metadata_path)?,
             registration: None,
             registration_info: None,
             runtime_metadata: None,
@@ -104,5 +122,55 @@ impl Il2CppProject {
             registration,
         )?);
         Ok(())
+    }
+}
+
+struct MetadataOnlyBinary;
+
+impl BinaryImage for MetadataOnlyBinary {
+    fn format(&self) -> BinaryFormat {
+        BinaryFormat::Elf64
+    }
+    fn architecture(&self) -> Architecture {
+        Architecture::Unknown
+    }
+    fn endianness(&self) -> Endianness {
+        Endianness::Little
+    }
+    fn kind(&self) -> BinaryKind {
+        BinaryKind::Unknown
+    }
+    fn file_size(&self) -> u64 {
+        0
+    }
+    fn entry_point(&self) -> u64 {
+        0
+    }
+    fn section_count(&self) -> usize {
+        0
+    }
+    fn sections(&self) -> &[SectionInfo] {
+        &[]
+    }
+    fn segments(&self) -> &[SegmentInfo] {
+        &[]
+    }
+    fn relative_relocations(&self) -> &[RelativeRelocation] {
+        &[]
+    }
+    fn is_stripped(&self) -> bool {
+        true
+    }
+    fn image_base(&self) -> u64 {
+        0
+    }
+    fn virtual_to_offset(&self, _address: u64) -> Option<u64> {
+        None
+    }
+    fn offset_to_virtual(&self, _offset: u64) -> Option<u64> {
+        None
+    }
+    fn read_virtual(&self, _address: u64, _size: usize) -> Result<&[u8]> {
+        Err(Error::AddressTranslationFailed)
     }
 }

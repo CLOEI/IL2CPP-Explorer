@@ -1676,6 +1676,7 @@ dependencies = [
  "anyhow",
  "clap",
  "il2cpp-core",
+ "il2cpp-diff",
  "il2cpp-disasm",
  "il2cpp-export",
  "serde",
@@ -1700,6 +1701,7 @@ dependencies = [
  "eframe",
  "egui",
  "il2cpp-core",
+ "il2cpp-diff",
  "il2cpp-disasm",
  "il2cpp-export",
  "rfd",
@@ -1708,6 +1710,12 @@ dependencies = [
 [[package]]
 name = "il2cpp-diff"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "il2cpp-core",
+ "il2cpp-disasm",
+ "serde",
+]
 
 [[package]]
 name = "il2cpp-disasm"
