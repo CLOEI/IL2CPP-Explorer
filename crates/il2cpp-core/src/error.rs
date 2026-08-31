@@ -11,6 +11,8 @@ pub enum Error {
     InvalidMetadataTable(&'static str),
     #[error("invalid metadata string index {0}")]
     InvalidMetadataString(u32),
+    #[error("invalid string literal record {0}")]
+    InvalidStringLiteral(usize),
     #[error("unsupported IL2CPP metadata version {0}")]
     UnsupportedMetadataVersion(u32),
     #[error("invalid or unsupported executable binary")]

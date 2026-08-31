@@ -7,6 +7,7 @@ mod image;
 mod method;
 mod parameter;
 mod property;
+mod string_literal;
 mod ty;
 mod type_ref;
 
@@ -19,5 +20,6 @@ pub use image::{Image, ImageId};
 pub use method::{Method, MethodId};
 pub use parameter::{Parameter, ParameterId};
 pub use property::{Property, PropertyId};
+pub use string_literal::{StringLiteral, StringLiteralId};
 pub use ty::{TypeDefinition, TypeId, TypeIndex, TypeKind};
 pub use type_ref::TypeRef;

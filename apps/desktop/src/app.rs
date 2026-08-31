@@ -13,6 +13,7 @@ use crate::navigation::{AddressTarget, NavigationTarget, TabState, parse_address
 use crate::recent::RecentProjects;
 use crate::state::{LoadState, MethodTab, ProjectData, SearchMatch, SearchResult, search};
 use crate::views::explorer::{self, ExplorerAction};
+use crate::views::strings_view::{self, StringFilter};
 use crate::views::welcome::{self, WelcomeAction};
 
 pub struct Il2CppExplorerApp {
@@ -37,6 +38,9 @@ pub struct Il2CppExplorerApp {
     recent: RecentProjects,
     tree_filter: String,
     member_filter: String,
+    string_query: String,
+    string_filter: StringFilter,
+    selected_string: Option<il2cpp_core::model::StringLiteralId>,
     pending_restore: Option<StableTarget>,
     mode: MainMode,
     compare: CompareState,
@@ -45,6 +49,7 @@ pub struct Il2CppExplorerApp {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MainMode {
     Explorer,
+    Strings,
     Compare,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -129,6 +134,9 @@ impl Default for Il2CppExplorerApp {
             recent: RecentProjects::load(),
             tree_filter: String::new(),
             member_filter: String::new(),
+            string_query: String::new(),
+            string_filter: StringFilter::All,
+            selected_string: None,
             pending_restore: None,
             mode: MainMode::Explorer,
             compare: CompareState::default(),
@@ -193,6 +201,10 @@ impl Il2CppExplorerApp {
                 self.tree_focus = None;
                 self.selected_address = Some(address);
             }
+            NavigationTarget::StringLiteral(id) => {
+                self.mode = MainMode::Strings;
+                self.selected_string = Some(id);
+            }
         }
     }
     fn navigation_title(&self, target: NavigationTarget) -> String {
@@ -219,6 +231,7 @@ impl Il2CppExplorerApp {
                 .and_then(|data| data.project.metadata().properties.get(id.0))
                 .map_or_else(|| "Property".into(), |item| item.name.clone()),
             NavigationTarget::Address(value) => format!("{value:?}"),
+            NavigationTarget::StringLiteral(id) => format!("String #{}", id.0),
         }
     }
     fn loaded(&self) -> Option<&ProjectData> {
@@ -329,6 +342,7 @@ impl Il2CppExplorerApp {
 
     fn select(&mut self, result: SearchResult) {
         let target = match result {
+            SearchResult::StringLiteral(id) => NavigationTarget::StringLiteral(id),
             SearchResult::Address(value) => NavigationTarget::Address(AddressTarget::Rva(value)),
             SearchResult::Assembly(id) => NavigationTarget::Assembly(id),
             SearchResult::Type(id) => NavigationTarget::Type(id),
@@ -556,11 +570,16 @@ impl eframe::App for Il2CppExplorerApp {
         egui::TopBottomPanel::top("main_navigation").show(context, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.mode, MainMode::Explorer, "Explorer");
+                ui.selectable_value(&mut self.mode, MainMode::Strings, "Strings");
                 ui.selectable_value(&mut self.mode, MainMode::Compare, "Compare Builds");
             });
         });
         if self.mode == MainMode::Compare {
             self.show_compare(context);
+            return;
+        }
+        if self.mode == MainMode::Strings {
+            self.show_strings(context);
             return;
         }
         self.handle_drops(context);
@@ -746,6 +765,24 @@ impl eframe::App for Il2CppExplorerApp {
 }
 
 impl Il2CppExplorerApp {
+    fn show_strings(&mut self, context: &egui::Context) {
+        let LoadState::Loaded(data) = &self.load_state else {
+            egui::CentralPanel::default().show(context, |ui| {
+                ui.heading("String Literals");
+                ui.weak("Open a project first.");
+            });
+            return;
+        };
+        egui::CentralPanel::default().show(context, |ui| {
+            strings_view::show(
+                ui,
+                data,
+                &mut self.string_query,
+                &mut self.string_filter,
+                &mut self.selected_string,
+            )
+        });
+    }
     fn show_compare(&mut self, context: &egui::Context) {
         let comparing = self.compare.receiver.is_some();
         if self.compare.report.is_none() {

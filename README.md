@@ -97,6 +97,21 @@ identity and normalized native body match while RVA changed. Where ARM64 mapping
 the differ fingerprints normalized instructions: direct calls become their managed target identity,
 internal branches become local relative blocks, while ordinary immediate constants remain intact.
 
+## String Explorer
+
+Managed IL2CPP string literals are separate from metadata identifier strings such as type and
+method names. The dedicated v31 `stringLiteral` and `stringLiteralData` tables are parsed by
+`il2cpp-core`, then shared by CLI and desktop.
+
+```bash
+il2cpp-explorer strings global-metadata.dat
+il2cpp-explorer strings global-metadata.dat login
+il2cpp-explorer string global-metadata.dat 421
+```
+
+Use `--all`, `--limit 100`, or `--json`. Desktop **Strings** provides virtualized list/search,
+URL/non-empty filters, full-value detail, and copy actions. See [string-literals.md](docs/string-literals.md).
+
 Addresses, metadata tokens, and resolved field offsets are included by default. Use
 `--no-addresses`, `--no-tokens`, or `--no-field-offsets` to omit them; `--file-offsets`,
 `--indices`, and `--fully-qualified-types` enable additional detail.

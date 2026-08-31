@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use il2cpp_core::analysis::Il2CppProject;
-use il2cpp_core::model::{AssemblyId, FieldId, MethodId, TypeId};
+use il2cpp_core::model::{AssemblyId, FieldId, MethodId, StringLiteralId, TypeId};
 use il2cpp_disasm::FunctionInspection;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +17,7 @@ pub enum MethodTab {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchResult {
+    StringLiteral(StringLiteralId),
     Address(u64),
     Assembly(AssemblyId),
     Type(TypeId),
@@ -56,6 +57,35 @@ pub struct ProjectData {
     pub csharp_types: HashMap<TypeId, String>,
     pub csharp_methods: HashMap<MethodId, String>,
     pub disassembly: HashMap<MethodId, Result<FunctionInspection, String>>,
+    pub string_search: StringSearchIndex,
+}
+
+pub struct StringSearchIndex {
+    values: Vec<String>,
+}
+impl StringSearchIndex {
+    pub fn build(project: &Il2CppProject) -> Self {
+        Self {
+            values: project
+                .metadata()
+                .string_literals()
+                .iter()
+                .map(|item| item.value.to_lowercase())
+                .collect(),
+        }
+    }
+    pub fn find(&self, query: &str) -> Vec<StringLiteralId> {
+        let query = query.to_lowercase();
+        if query.is_empty() {
+            return (0..self.values.len()).map(StringLiteralId).collect();
+        }
+        self.values
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| value.contains(&query))
+            .map(|(index, _)| StringLiteralId(index))
+            .collect()
+    }
 }
 
 #[derive(Default)]
@@ -121,6 +151,7 @@ impl ProjectData {
     pub fn new(project: Arc<Il2CppProject>, binary_path: PathBuf, metadata_path: PathBuf) -> Self {
         let navigation = NavigationIndex::build(&project);
         let search_entries = build_search_entries(&project);
+        let string_search = StringSearchIndex::build(&project);
         Self {
             project,
             binary_path,
@@ -130,6 +161,7 @@ impl ProjectData {
             csharp_types: HashMap::new(),
             csharp_methods: HashMap::new(),
             disassembly: HashMap::new(),
+            string_search,
         }
     }
 }
@@ -158,7 +190,7 @@ fn parse_search_query(query: &str) -> (Option<&str>, String) {
             (
                 matches!(
                     kind.to_ascii_lowercase().as_str(),
-                    "type" | "method" | "field" | "namespace" | "assembly"
+                    "type" | "method" | "field" | "namespace" | "assembly" | "string"
                 )
                 .then_some(kind),
                 value,
@@ -242,7 +274,23 @@ fn build_search_entries(project: &Il2CppProject) -> Vec<SearchMatch> {
             .to_lowercase(),
         });
     }
+    for literal in metadata.string_literals() {
+        entries.push(SearchMatch {
+            result: SearchResult::StringLiteral(literal.id),
+            label: truncate_search_literal(&literal.escaped()),
+            kind: "String",
+            searchable: literal.value.to_lowercase(),
+        });
+    }
     entries
+}
+
+fn truncate_search_literal(value: &str) -> String {
+    if value.chars().count() <= 96 {
+        value.to_owned()
+    } else {
+        format!("{}...", value.chars().take(96).collect::<String>())
+    }
 }
 
 pub fn type_name(project: &Il2CppProject, type_id: TypeId) -> String {

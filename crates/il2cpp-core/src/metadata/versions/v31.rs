@@ -12,6 +12,13 @@ pub(crate) const PARAMETER_SIZE: usize = 12;
 pub(crate) const PROPERTY_SIZE: usize = 20;
 pub(crate) const GENERIC_PARAMETER_SIZE: usize = 16;
 pub(crate) const GENERIC_CONTAINER_SIZE: usize = 16;
+pub(crate) const STRING_LITERAL_SIZE: usize = 8;
+
+#[derive(Debug)]
+pub(crate) struct RawStringLiteral {
+    pub length: u32,
+    pub data_index: u32,
+}
 
 #[derive(Debug)]
 pub(crate) struct RawImage {
@@ -109,6 +116,7 @@ pub(crate) struct RawGenericParameter {
 
 #[derive(Debug)]
 pub(crate) struct RawRecords {
+    pub string_literals: Vec<RawStringLiteral>,
     pub images: Vec<RawImage>,
     pub assemblies: Vec<RawAssembly>,
     pub types: Vec<RawTypeDefinition>,
@@ -194,6 +202,7 @@ pub(crate) fn parse_records(
     header: &MetadataHeader,
 ) -> Result<RawRecords> {
     Ok(RawRecords {
+        string_literals: parse_string_literals(reader, header)?,
         images: parse_images(reader, header)?,
         assemblies: parse_assemblies(reader, header)?,
         types: parse_types(reader, header)?,
@@ -210,6 +219,21 @@ pub(crate) fn parse_records(
         nested_types: parse_i32_table(reader, header.nested_types)?,
         interfaces: parse_i32_table(reader, header.interfaces)?,
     })
+}
+
+fn parse_string_literals(
+    reader: &MetadataReader<'_>,
+    header: &MetadataHeader,
+) -> Result<Vec<RawStringLiteral>> {
+    offsets(header.string_literals, STRING_LITERAL_SIZE, reader.len())?
+        .into_iter()
+        .map(|offset| {
+            Ok(RawStringLiteral {
+                length: reader.read_u32(offset)?,
+                data_index: reader.read_u32(offset + 4)?,
+            })
+        })
+        .collect()
 }
 
 fn offsets(table: MetadataTable, size: usize, file_size: usize) -> Result<Vec<usize>> {

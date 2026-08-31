@@ -3,9 +3,11 @@ use crate::metadata::{Metadata, MetadataReader, string_at};
 use crate::model::{
     Assembly, AssemblyId, Field, FieldId, GenericContainer, GenericContainerId, GenericOwner,
     GenericParameter, GenericParameterId, Image, ImageId, Method, MethodId, Parameter, ParameterId,
-    Property, PropertyId, TypeDefinition, TypeId, TypeIndex,
+    Property, PropertyId, StringLiteral, StringLiteralId, TypeDefinition, TypeId, TypeIndex,
 };
 use crate::{Error, Result};
+
+const STRING_LITERAL_RECORD_SIZE: usize = 8;
 
 pub(super) fn parse(data: Vec<u8>) -> Result<Metadata> {
     let reader = MetadataReader::new(&data);
@@ -367,6 +369,55 @@ pub(super) fn parse(data: Vec<u8>) -> Result<Metadata> {
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let string_literals = raw
+        .string_literals
+        .iter()
+        .enumerate()
+        .map(|(index, literal)| {
+            let start = usize::try_from(literal.data_index)
+                .map_err(|_| Error::InvalidStringLiteral(index))?;
+            let length =
+                usize::try_from(literal.length).map_err(|_| Error::InvalidStringLiteral(index))?;
+            let end = start
+                .checked_add(length)
+                .ok_or(Error::InvalidStringLiteral(index))?;
+            if end > header.string_literal_data.byte_count {
+                return Err(Error::InvalidStringLiteral(index));
+            }
+            let offset = header
+                .string_literal_data
+                .offset
+                .checked_add(start)
+                .ok_or(Error::InvalidStringLiteral(index))?;
+            let bytes = data
+                .get(
+                    offset
+                        ..offset
+                            .checked_add(length)
+                            .ok_or(Error::InvalidStringLiteral(index))?,
+                )
+                .ok_or(Error::InvalidStringLiteral(index))?;
+            let valid_utf8 = std::str::from_utf8(bytes).is_ok();
+            Ok(StringLiteral {
+                id: StringLiteralId(index),
+                value: String::from_utf8_lossy(bytes).into_owned(),
+                metadata_index: index,
+                data_index: literal.data_index,
+                byte_length: literal.length,
+                metadata_file_offset: header
+                    .string_literals
+                    .offset
+                    .checked_add(
+                        index
+                            .checked_mul(STRING_LITERAL_RECORD_SIZE)
+                            .ok_or(Error::InvalidStringLiteral(index))?,
+                    )
+                    .and_then(|value| u64::try_from(value).ok()),
+                valid_utf8,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
     for ty in &types {
         if let Some(container) = ty.generic_container_index
             && generic_containers[container].owner != GenericOwner::Type(ty.id)
@@ -395,6 +446,7 @@ pub(super) fn parse(data: Vec<u8>) -> Result<Metadata> {
         properties,
         generic_containers,
         generic_parameters,
+        string_literals,
         header,
         data,
     })

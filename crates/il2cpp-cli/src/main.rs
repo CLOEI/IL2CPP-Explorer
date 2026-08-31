@@ -134,6 +134,22 @@ enum Command {
         #[arg(long, default_value_t = 256)]
         bytes: usize,
     },
+    /// List managed IL2CPP string literals (not metadata identifier strings).
+    Strings {
+        metadata: PathBuf,
+        query: Option<String>,
+        #[arg(long)]
+        all: bool,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Inspect one managed IL2CPP string literal by index.
+    #[command(name = "string")]
+    StringLiteral { metadata: PathBuf, index: usize },
     /// Compare two IL2CPP builds using managed identities, then native bodies when available.
     Diff {
         #[arg(long)]
@@ -273,6 +289,22 @@ fn main() -> Result<()> {
             method_id,
             bytes,
         } => commands::calls(&binary, &metadata, query.as_deref(), method_id, bytes),
+        Command::Strings {
+            metadata,
+            query,
+            all,
+            limit,
+            json,
+            output,
+        } => commands::strings(
+            &metadata,
+            query.as_deref(),
+            all,
+            limit,
+            json || output.is_some(),
+            output.as_deref(),
+        ),
+        Command::StringLiteral { metadata, index } => commands::string_literal(&metadata, index),
         Command::Diff {
             old_binary,
             old_metadata,

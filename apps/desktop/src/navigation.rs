@@ -1,4 +1,4 @@
-use il2cpp_core::model::{AssemblyId, FieldId, MethodId, PropertyId, TypeId};
+use il2cpp_core::model::{AssemblyId, FieldId, MethodId, PropertyId, StringLiteralId, TypeId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AddressTarget {
@@ -17,6 +17,7 @@ pub enum NavigationTarget {
     Property(PropertyId),
     Method(MethodId),
     Address(AddressTarget),
+    StringLiteral(StringLiteralId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

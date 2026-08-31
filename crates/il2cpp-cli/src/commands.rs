@@ -201,6 +201,10 @@ pub(crate) fn target(verbose: bool) -> Result<()> {
     println!("  Types:        OK ({})", metadata.types.len());
     println!("  Fields:       OK ({})", metadata.fields.len());
     println!("  Methods:      OK ({})", metadata.methods.len());
+    println!(
+        "  String literals: OK ({})",
+        metadata.string_literals().len()
+    );
     println!("\nExample Images");
     for image in metadata.images.iter().take(3) {
         println!("  {}", image.name);
@@ -293,6 +297,7 @@ pub(crate) fn metadata(path: &Path, verbose: bool) -> Result<()> {
     println!("  Fields:      {}", metadata.fields.len());
     println!("  Methods:     {}", metadata.methods.len());
     println!("  Parameters:  {}", metadata.parameters.len());
+    println!("  String literals: {}", metadata.string_literals().len());
     if verbose {
         println!();
         print_metadata_tables(metadata.header());
@@ -304,6 +309,110 @@ pub(crate) fn metadata_string(path: &Path, index: u32) -> Result<()> {
     let metadata = load_metadata(path)?;
     println!("{}", metadata.string(index)?);
     Ok(())
+}
+
+pub(crate) fn strings(
+    path: &Path,
+    query: Option<&str>,
+    all: bool,
+    limit: usize,
+    json_output: bool,
+    output: Option<&Path>,
+) -> Result<()> {
+    let metadata = load_metadata(path)?;
+    let matches = query.map_or_else(
+        || metadata.string_literals().iter().collect::<Vec<_>>(),
+        |query| metadata.find_string_literals(query),
+    );
+    let shown = if all {
+        matches.len()
+    } else {
+        matches.len().min(limit)
+    };
+    if json_output {
+        let value = json!({ "total_matches": matches.len(), "strings": matches[..shown].iter().map(|literal| json!({ "id": literal.id.0, "length": literal.byte_length, "value": literal.value })).collect::<Vec<_>>() });
+        let bytes = serde_json::to_vec_pretty(&value)?;
+        if let Some(path) = output {
+            std::fs::write(path, bytes)?;
+        } else {
+            println!("{}", String::from_utf8(bytes)?);
+        }
+        return Ok(());
+    }
+    let empty = metadata
+        .string_literals()
+        .iter()
+        .filter(|literal| literal.value.is_empty())
+        .count();
+    let urls = metadata
+        .string_literals()
+        .iter()
+        .filter(|literal| literal.is_url())
+        .count();
+    let invalid = metadata
+        .string_literals()
+        .iter()
+        .filter(|literal| !literal.valid_utf8)
+        .count();
+    let longest = metadata
+        .string_literals()
+        .iter()
+        .map(|literal| literal.byte_length)
+        .max()
+        .unwrap_or(0);
+    println!(
+        "IL2CPP String Literals\n\nTotal: {}\nEmpty: {}\nURLs: {}\nInvalid UTF-8: {}\nLongest: {} bytes",
+        metadata.string_literals().len(),
+        empty,
+        urls,
+        invalid,
+        longest
+    );
+    if query.is_some() {
+        println!("Matches: {}", matches.len());
+    }
+    println!("\nIndex      Length   Value");
+    for literal in &matches[..shown] {
+        println!(
+            "{:>8}  {:>6}   \"{}\"",
+            literal.id.0,
+            literal.byte_length,
+            truncate_literal(&literal.escaped(), 96)
+        );
+    }
+    if shown < matches.len() {
+        println!(
+            "\nShowing {shown} of {}. Pass --all for complete output.",
+            matches.len()
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn string_literal(path: &Path, index: usize) -> Result<()> {
+    let metadata = load_metadata(path)?;
+    let literal = metadata
+        .string_literal(il2cpp_core::model::StringLiteralId(index))
+        .context("string literal index is out of range")?;
+    println!(
+        "String Literal #{}\n\nLength\n{} bytes\n\nData index\n{:#010X}\n\nMetadata file offset\n{}\n\nValue\n\n{}",
+        literal.id.0,
+        literal.byte_length,
+        literal.data_index,
+        literal
+            .metadata_file_offset
+            .map_or_else(|| "-".to_owned(), |value| format!("{value:#010X}")),
+        literal.value
+    );
+    Ok(())
+}
+
+fn truncate_literal(value: &str, limit: usize) -> String {
+    if value.chars().count() <= limit {
+        value.to_owned()
+    } else {
+        format!("{}...", value.chars().take(limit).collect::<String>())
+    }
 }
 
 pub(crate) fn images(path: &Path) -> Result<()> {
@@ -1136,6 +1245,7 @@ fn print_metadata_summary(path: &Path, metadata: &Metadata) {
     println!("  Sanity:       {:#010X}", metadata.header().sanity);
     println!("  Version:      {}", metadata.version);
     println!("  Status:       Valid");
+    println!("  String literals: {}", metadata.string_literals().len());
 }
 
 fn print_metadata_tables(header: &MetadataHeader) {
